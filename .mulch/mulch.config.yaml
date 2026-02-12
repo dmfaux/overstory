@@ -1,5 +1,10 @@
 version: '1'
-domains: []
+domains:
+  - architecture
+  - agents
+  - typescript
+  - cli
+  - messaging
 governance:
   max_entries: 100
   warn_entries: 150

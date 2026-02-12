@@ -20,7 +20,7 @@
 | Worker sessions | Claude Code in tmux | Supports messaging, inspection, multi-step |
 | Agent definitions | Library base + dynamic overlay | Base `.md` = HOW, overlay CLAUDE.md = WHAT |
 | Hierarchy | Hierarchical delegation | Orchestrator -> team leads -> specialists |
-| Messaging | Beads-backed mail | Messages = beads issues with mail labels |
+| Messaging | Custom SQLite mail | Purpose-built, ~1-5ms queries, independent of beads |
 | Result reporting | Beads only | `bd close` with result summary |
 | State location | In target repo (`.overstory/`) | Gitignored, shared filesystem |
 | Capabilities | Dynamic, not fixed roles | Agents get tool sets assigned per-task |
@@ -172,42 +172,79 @@ Orchestrator (your Claude Code session)
 
 ---
 
-## Messaging: Beads-Backed Mail
+## Messaging: Custom SQLite Mail
 
-Messages are beads issues with a `overstory:mail` label. This reuses existing beads infrastructure.
+Purpose-built messaging system using SQLite (`bun:sqlite`). Independent of beads.
+
+**Why not beads for mail?**
+- Mail is high-frequency (agents poll on every prompt via hooks). `bd` CLI spawns at ~50-200ms each — too slow for 10+ agents polling.
+- Abstraction mismatch: issues have status/priority/assignee/blocks — messages need from/to/subject/body. Fighting the model, not leveraging it.
+- Separation of concerns: beads = task management, mail = communication. Independent failure domains.
+- SQLite via `bun:sqlite` = ~1-5ms per query, zero external deps, atomic writes.
+
+**Beads still owns:** task lifecycle (`bd create/ready/close`), molecules, convoy tracking, atomic task claiming.
+
+### Schema
+
+```sql
+-- .overstory/mail.db
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,              -- "msg-" + nanoid(12)
+  from_agent TEXT NOT NULL,         -- sender agent name
+  to_agent TEXT NOT NULL,           -- recipient agent name or "orchestrator"
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'status',    -- status | question | result | error
+  priority TEXT NOT NULL DEFAULT 'normal', -- low | normal | high | urgent
+  thread_id TEXT,                   -- optional: group related messages
+  read INTEGER NOT NULL DEFAULT 0,  -- 0 = unread, 1 = read
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbox ON messages(to_agent, read);
+CREATE INDEX IF NOT EXISTS idx_thread ON messages(thread_id);
+```
 
 ### Message Format
 
 ```typescript
 interface MailMessage {
-  from: string;          // "auth-login" (agent name)
-  to: string;            // "orchestrator" | "build-lead" | "auth-signup"
+  id: string;                // "msg-a1b2c3d4e5f6"
+  from: string;              // "auth-login" (agent name)
+  to: string;                // "orchestrator" | "build-lead" | "auth-signup"
   subject: string;
   body: string;
   priority: "low" | "normal" | "high" | "urgent";
   type: "status" | "question" | "result" | "error";
+  threadId: string | null;   // For conversation threading
+  read: boolean;
+  createdAt: string;         // ISO timestamp
 }
 ```
 
 ### CLI Commands
 
 ```bash
-# Send a message (creates beads issue with mail label)
+# Send a message (INSERT into SQLite)
 overstory mail send --to orchestrator --subject "Build complete" \
   --body "Implemented login flow. Tests passing." --type result
 
-# Check inbox (queries beads for messages addressed to this agent)
+# Check inbox (SELECT unread WHERE to_agent = name)
 overstory mail check                    # Human-readable
 overstory mail check --json             # JSON output
-overstory mail check --inject           # Outputs for hook injection into context
+overstory mail check --inject           # Formatted for hook context injection
 
-# List all mail (for orchestrator visibility)
+# List all mail (with filters)
 overstory mail list
 overstory mail list --from auth-login   # Filter by sender
 overstory mail list --unread            # Unread only
 
-# Mark as read (closes the beads issue)
+# Mark as read (UPDATE read = 1)
 overstory mail read <message-id>
+
+# Reply (creates message with same thread_id)
+overstory mail reply <message-id> --body "Acknowledged, proceeding."
 ```
 
 ### Hook Integration
@@ -231,7 +268,19 @@ Workers receive messages via the `UserPromptSubmit` hook:
 }
 ```
 
-When the agent submits a prompt, the hook checks for mail and injects any new messages into the context. This gives agents "interrupt-like" messaging without tmux injection.
+When the agent submits a prompt, the hook queries SQLite for unread messages and injects them into context. ~1-5ms per check — negligible overhead even at scale.
+
+### Concurrency
+
+SQLite WAL mode handles concurrent reads/writes from multiple agent processes:
+
+```typescript
+// On DB open
+db.exec("PRAGMA journal_mode=WAL");
+db.exec("PRAGMA busy_timeout=5000");
+```
+
+Multiple agents in separate worktrees can all read/write `.overstory/mail.db` safely — WAL mode allows concurrent readers with one writer, and busy_timeout handles contention.
 
 ---
 
@@ -432,8 +481,11 @@ overstory/                             # The overstory tool itself
 │   │
 │   ├── beads/
 │   │   ├── client.ts                 # bd CLI wrapper (--json parsing)
-│   │   ├── mail.ts                   # Mail-over-beads (send/check/list/read)
 │   │   └── molecules.ts             # Molecule management helpers
+│   │
+│   ├── mail/
+│   │   ├── store.ts                  # SQLite mail storage (bun:sqlite)
+│   │   └── client.ts                 # Mail send/check/list/read operations
 │   │
 │   ├── mulch/
 │   │   └── client.ts                 # mulch CLI wrapper (prime/record/status --json)
@@ -474,7 +526,8 @@ overstory/                             # The overstory tool itself
 │   ├── worktree.test.ts
 │   ├── tmux.test.ts
 │   ├── beads-client.test.ts
-│   ├── mail.test.ts
+│   ├── mail-store.test.ts
+│   ├── mail-client.test.ts
 │   ├── merge-queue.test.ts
 │   ├── resolver.test.ts
 │   ├── overlay.test.ts
@@ -505,6 +558,7 @@ target-project/
 │   │   └── {bead-id}.md
 │   ├── logs/                         # Agent logs (gitignored)
 │   │   └── {agent-name}/{timestamp}/
+│   ├── mail.db                       # SQLite mail (gitignored, WAL mode)
 │   └── metrics.db                    # SQLite metrics (gitignored)
 ├── .gitignore                        # Updated with .overstory/worktrees, logs, metrics.db
 └── .claude/
@@ -611,18 +665,19 @@ export interface AgentIdentity {
   }>;
 }
 
-// === Mail ===
+// === Mail (Custom SQLite) ===
 
 export interface MailMessage {
-  id: string;                              // Beads issue ID
+  id: string;                              // "msg-" + nanoid(12)
   from: string;                            // Agent name
   to: string;                              // Agent name or "orchestrator"
   subject: string;
   body: string;
   priority: "low" | "normal" | "high" | "urgent";
   type: "status" | "question" | "result" | "error";
-  timestamp: string;
+  threadId: string | null;                 // Conversation threading
   read: boolean;
+  createdAt: string;                       // ISO timestamp
 }
 
 // === Overlay ===
@@ -726,7 +781,7 @@ overstory status                            Show system state
   --json                                      JSON output
   --watch                                     Live updating
 
-overstory mail send                         Send a message via beads
+overstory mail send                         Send a message (SQLite INSERT)
   --to <agent-name>                           Recipient
   --subject <text>                            Subject line
   --body <text>                               Message body
@@ -744,6 +799,8 @@ overstory mail list                         List all messages
   --unread                                    Unread only
 
 overstory mail read <id>                    Mark message as read
+overstory mail reply <id>                   Reply in same thread
+  --body <text>                               Reply body
 
 overstory merge                             Merge agent branches
   --branch <name>                             Specific branch
@@ -857,6 +914,7 @@ Bun runs TypeScript directly — no build step.
 | L1-5 | `src/beads/client.ts` | Wrap `bd` CLI, parse `--json` output |
 | L1-6 | `src/mulch/client.ts` | Wrap `mulch` CLI, prime with `--json` output |
 | L1-7 | `src/metrics/store.ts`, `src/metrics/summary.ts` | SQLite via bun:sqlite |
+| L1-8 | `src/mail/store.ts` | SQLite mail storage (schema, CRUD, WAL mode) |
 
 **L1-3: Worktree Manager**
 ```typescript
@@ -916,10 +974,10 @@ export function createBeadsClient(cwd: string): BeadsClient;
 | L2-1 | `src/agents/overlay.ts` | Generate per-worker CLAUDE.md overlay |
 | L2-2 | `src/agents/hooks-deployer.ts` | Deploy hooks config to worktree |
 | L2-3 | `src/agents/identity.ts` | Create/load/update agent identity |
-| L2-4 | `src/beads/mail.ts` | Mail-over-beads (send/check/list/read) |
+| L2-4 | `src/mail/client.ts` | Mail client (send/check/list/read/reply over SQLite store) |
 | L2-5 | `src/commands/sling.ts` | The `overstory sling` command (creates worktree + overlay + hooks + tmux) |
 | L2-6 | `src/commands/prime.ts` | The `overstory prime` command (context loading) |
-| L2-7 | `src/commands/mail.ts` | The `overstory mail` command family |
+| L2-7 | `src/commands/mail.ts` | The `overstory mail` CLI command family |
 
 **L2-1: Overlay Generator**
 ```typescript
@@ -929,20 +987,23 @@ export function writeOverlay(worktreePath: string, config: OverlayConfig): Promi
 
 Reads `templates/overlay.md.tmpl`, fills in variables, writes to `{worktree}/.claude/CLAUDE.md`.
 
-**L2-4: Mail over Beads**
+**L2-4: Mail Client (over SQLite)**
 ```typescript
 export interface MailClient {
-  send(message: Omit<MailMessage, "id" | "timestamp" | "read">): Promise<string>;
-  check(agentName: string): Promise<MailMessage[]>;
-  checkInject(agentName: string): Promise<string>;  // Formatted for hook injection
-  list(filters?: { from?: string; to?: string; unread?: boolean }): Promise<MailMessage[]>;
-  markRead(messageId: string): Promise<void>;
+  send(message: Omit<MailMessage, "id" | "createdAt" | "read">): string;  // Sync, returns ID
+  check(agentName: string): MailMessage[];             // Unread messages for agent
+  checkInject(agentName: string): string;              // Formatted for hook injection
+  list(filters?: { from?: string; to?: string; unread?: boolean }): MailMessage[];
+  markRead(messageId: string): void;
+  reply(messageId: string, body: string): string;      // Creates reply in same thread
 }
 
-export function createMailClient(beadsClient: BeadsClient): MailClient;
+export function createMailClient(dbPath: string): MailClient;
 ```
 
-Implementation: `send` creates a beads issue with `overstory:mail` label + structured JSON in body. `check` queries `bd ready --json` filtered by label and assignee. `markRead` calls `bd close`.
+Implementation: All operations are synchronous SQLite queries via `bun:sqlite`. The mail store (L1-8) handles schema creation, WAL mode, and prepared statements. The client wraps store operations with ID generation and thread management.
+
+Note: Synchronous by design — `bun:sqlite` is sync and ~1-5ms per query. No need for async overhead on local DB operations.
 
 **L2-5: Sling Command (Critical Path)**
 
@@ -1047,11 +1108,12 @@ export function startDaemon(options: {
 | L5-3 | `__tests__/worktree.test.ts` | Worktree create/list/remove (temp dirs) |
 | L5-4 | `__tests__/tmux.test.ts` | Tmux session management |
 | L5-5 | `__tests__/beads-client.test.ts` | Beads CLI wrapper (mock subprocess) |
-| L5-6 | `__tests__/mail.test.ts` | Mail send/check/list/read |
-| L5-7 | `__tests__/merge-queue.test.ts` | Queue ordering, conflict detection |
-| L5-8 | `__tests__/resolver.test.ts` | All 4 resolution tiers |
-| L5-9 | `__tests__/overlay.test.ts` | Overlay generation, template rendering |
-| L5-10 | `__tests__/hooks-deployer.test.ts` | Hooks config deployment |
+| L5-6 | `__tests__/mail-store.test.ts` | SQLite mail schema, CRUD, WAL concurrency |
+| L5-7 | `__tests__/mail-client.test.ts` | Send/check/list/read/reply, thread management |
+| L5-8 | `__tests__/merge-queue.test.ts` | Queue ordering, conflict detection |
+| L5-9 | `__tests__/resolver.test.ts` | All 4 resolution tiers |
+| L5-10 | `__tests__/overlay.test.ts` | Overlay generation, template rendering |
+| L5-11 | `__tests__/hooks-deployer.test.ts` | Hooks config deployment |
 
 ---
 
@@ -1061,11 +1123,11 @@ export function startDaemon(options: {
 Layer 0: Scaffolding (6 tasks)
   │  package.json, tsconfig, biome, types, config, agent defs, templates
   │
-  ├──→ Layer 1: Core Infrastructure (7 tasks, ALL PARALLEL)
-  │      logger, manifest, worktree-mgr, tmux, beads-client, mulch-client, metrics
+  ├──→ Layer 1: Core Infrastructure (8 tasks, ALL PARALLEL)
+  │      logger, manifest, worktree-mgr, tmux, beads-client, mulch-client, metrics, mail-store
   │      │
   │      ├──→ Layer 2: Agent Lifecycle + Mail (7 tasks, ALL PARALLEL)
-  │      │      overlay, hooks-deployer, identity, mail, sling, prime, mail-cmd
+  │      │      overlay, hooks-deployer, identity, mail-client, sling, prime, mail-cmd
   │      │      │
   │      │      ├──→ Layer 3: Merge + Orchestration (6 tasks, ALL PARALLEL)
   │      │      │      merge-queue, resolver, molecules, merge-cmd, status-cmd, worktree-cmd
@@ -1075,7 +1137,7 @@ Layer 0: Scaffolding (6 tasks)
   │      │      │
   │      └──→ Layer 5: Tests (10 tasks, ALL PARALLEL with Layers 3-4)
   │
-  Total: 44 tasks across 6 layers
+  Total: 45 tasks across 6 layers
 ```
 
 ---
@@ -1097,7 +1159,7 @@ Layer 0: Scaffolding (6 tasks)
 | **overlay** | `src/agents/overlay.ts` |
 | **hooks** | `src/agents/hooks-deployer.ts` |
 | **identity** | `src/agents/identity.ts` |
-| **mail** | `src/beads/mail.ts`, `src/commands/mail.ts` |
+| **mail** | `src/mail/*`, `src/commands/mail.ts` |
 | **sling** | `src/commands/sling.ts`, `src/commands/prime.ts` |
 | **merger** | `src/merge/*`, `src/commands/merge.ts` |
 | **molecules** | `src/beads/molecules.ts` |

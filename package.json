@@ -1,0 +1,20 @@
+{
+	"name": "overstory",
+	"version": "0.1.0",
+	"type": "module",
+	"bin": {
+		"overstory": "./src/index.ts"
+	},
+	"scripts": {
+		"test": "bun test",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5.9.0",
+		"@biomejs/biome": "^1.9.0"
+	}
+}
