@@ -129,6 +129,8 @@ function makeCoordinatorSession(overrides: Partial<AgentSession> = {}): AgentSes
 		depth: 0,
 		startedAt: new Date().toISOString(),
 		lastActivity: new Date().toISOString(),
+		escalationLevel: 0,
+		stalledSince: null,
 		...overrides,
 	};
 }

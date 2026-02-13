@@ -113,14 +113,14 @@ mulch:
 agents:
   staggerDelayMs: 5000
 watchdog:
-  tier1IntervalMs: 60000
+  tier0IntervalMs: 60000
   staleThresholdMs: 120000
   zombieThresholdMs: 300000
 `);
 
 		const config = await loadConfig(tempDir);
 		expect(config.agents.staggerDelayMs).toBe(5000);
-		expect(config.watchdog.tier1IntervalMs).toBe(60000);
+		expect(config.watchdog.tier0IntervalMs).toBe(60000);
 	});
 
 	test("handles quoted string values", async () => {
@@ -149,6 +149,39 @@ agents:
 		const config = await loadConfig(tempDir);
 		expect(config.project.canonicalBranch).toBe("develop");
 		expect(config.agents.maxConcurrent).toBe(3);
+	});
+
+	test("migrates deprecated watchdog tier1/tier2 keys to tier0/tier1", async () => {
+		await ensureOverstoryDir();
+		await writeConfig(`
+watchdog:
+  tier1Enabled: true
+  tier1IntervalMs: 45000
+  tier2Enabled: true
+`);
+
+		const config = await loadConfig(tempDir);
+		// Old tier1 (mechanical daemon) → new tier0
+		expect(config.watchdog.tier0Enabled).toBe(true);
+		expect(config.watchdog.tier0IntervalMs).toBe(45000);
+		// Old tier2 (AI triage) → new tier1
+		expect(config.watchdog.tier1Enabled).toBe(true);
+	});
+
+	test("new-style tier keys take precedence over deprecated keys", async () => {
+		await ensureOverstoryDir();
+		await writeConfig(`
+watchdog:
+  tier0Enabled: false
+  tier0IntervalMs: 20000
+  tier1Enabled: true
+`);
+
+		const config = await loadConfig(tempDir);
+		// New keys used directly — no migration needed
+		expect(config.watchdog.tier0Enabled).toBe(false);
+		expect(config.watchdog.tier0IntervalMs).toBe(20000);
+		expect(config.watchdog.tier1Enabled).toBe(true);
 	});
 });
 
@@ -218,11 +251,11 @@ watchdog:
 		await expect(loadConfig(tempDir)).rejects.toThrow(ValidationError);
 	});
 
-	test("rejects non-positive tier1IntervalMs when tier1 is enabled", async () => {
+	test("rejects non-positive tier0IntervalMs when tier0 is enabled", async () => {
 		await writeConfig(`
 watchdog:
-  tier1Enabled: true
-  tier1IntervalMs: 0
+  tier0Enabled: true
+  tier0IntervalMs: 0
 `);
 		await expect(loadConfig(tempDir)).rejects.toThrow(ValidationError);
 	});
@@ -350,7 +383,7 @@ describe("DEFAULT_CONFIG", () => {
 		expect(DEFAULT_CONFIG.agents.maxConcurrent).toBe(5);
 		expect(DEFAULT_CONFIG.agents.maxDepth).toBe(2);
 		expect(DEFAULT_CONFIG.agents.staggerDelayMs).toBe(2_000);
-		expect(DEFAULT_CONFIG.watchdog.tier1IntervalMs).toBe(30_000);
+		expect(DEFAULT_CONFIG.watchdog.tier0IntervalMs).toBe(30_000);
 		expect(DEFAULT_CONFIG.watchdog.staleThresholdMs).toBe(300_000);
 		expect(DEFAULT_CONFIG.watchdog.zombieThresholdMs).toBe(600_000);
 	});

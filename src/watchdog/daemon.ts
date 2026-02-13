@@ -1,19 +1,62 @@
 /**
- * Tier 1 mechanical process monitoring daemon.
+ * Tier 0 mechanical process monitoring daemon.
  *
  * Runs on a configurable interval, checking the health of all active agent
- * sessions. Handles automatic termination of zombie agents and escalation
- * of stalled agents to Tier 2 triage.
+ * sessions. Implements progressive nudging for stalled agents instead of
+ * immediately escalating to AI triage:
+ *
+ *   Level 0 (warn):      Log warning via onHealthCheck callback, no direct action
+ *   Level 1 (nudge):     Send tmux nudge via nudgeAgent()
+ *   Level 2 (escalate):  Invoke Tier 1 AI triage (if tier1Enabled), else skip
+ *   Level 3 (terminate): Kill tmux session
+ *
+ * Phase 4 tier numbering:
+ *   Tier 0 = Mechanical daemon (this file)
+ *   Tier 1 = Triage agent (triage.ts)
+ *   Tier 2 = Monitor agent (not yet implemented)
+ *   Tier 3 = Supervisor monitors (per-project)
  *
  * ZFC Principle: Observable state (tmux alive, pid alive) is the source of
  * truth. See health.ts for the full ZFC documentation.
  */
 
 import { join } from "node:path";
+import { nudgeAgent } from "../commands/nudge.ts";
 import type { AgentSession, HealthCheck } from "../types.ts";
 import { isSessionAlive, killSession } from "../worktree/tmux.ts";
 import { evaluateHealth, transitionState } from "./health.ts";
 import { triageAgent } from "./triage.ts";
+
+/** Maximum escalation level (terminate). */
+const MAX_ESCALATION_LEVEL = 3;
+
+/** Options shared between startDaemon and runDaemonTick. */
+export interface DaemonOptions {
+	root: string;
+	staleThresholdMs: number;
+	zombieThresholdMs: number;
+	nudgeIntervalMs?: number;
+	tier1Enabled?: boolean;
+	onHealthCheck?: (check: HealthCheck) => void;
+	/** Dependency injection for testing. Uses real implementations when omitted. */
+	_tmux?: {
+		isSessionAlive: (name: string) => Promise<boolean>;
+		killSession: (name: string) => Promise<void>;
+	};
+	/** Dependency injection for testing. Uses real triageAgent when omitted. */
+	_triage?: (options: {
+		agentName: string;
+		root: string;
+		lastActivity: string;
+	}) => Promise<"retry" | "terminate" | "extend">;
+	/** Dependency injection for testing. Uses real nudgeAgent when omitted. */
+	_nudge?: (
+		projectRoot: string,
+		agentName: string,
+		message: string,
+		force: boolean,
+	) => Promise<{ delivered: boolean; reason?: string }>;
+}
 
 /**
  * Start the watchdog daemon that periodically monitors agent health.
@@ -22,111 +65,30 @@ import { triageAgent } from "./triage.ts";
  * 1. Loads sessions.json from {root}/.overstory/sessions.json
  * 2. For each session (including zombies — ZFC requires re-checking observable
  *    state), checks tmux liveness and evaluates health
- * 3. Terminates zombie agents (kills tmux session, updates state)
- * 4. Flags "investigate" cases where tmux is alive but sessions.json says zombie
- * 5. Escalates stalled agents to AI triage
+ * 3. For "terminate" actions: kills tmux session immediately
+ * 4. For "investigate" actions: surfaces via onHealthCheck, no auto-kill
+ * 5. For "escalate" actions: applies progressive nudging based on escalationLevel
  * 6. Persists updated session states back to sessions.json
  *
  * @param options.root - Project root directory (contains .overstory/)
  * @param options.intervalMs - Polling interval in milliseconds
  * @param options.staleThresholdMs - Time after which an agent is considered stale
  * @param options.zombieThresholdMs - Time after which an agent is considered a zombie
+ * @param options.nudgeIntervalMs - Time between progressive nudge stage transitions (default 60000)
+ * @param options.tier1Enabled - Whether Tier 1 AI triage is enabled (default false)
  * @param options.onHealthCheck - Optional callback for each health check result
  * @returns An object with a `stop` function to halt the daemon
  */
-export function startDaemon(options: {
-	root: string;
-	intervalMs: number;
-	staleThresholdMs: number;
-	zombieThresholdMs: number;
-	onHealthCheck?: (check: HealthCheck) => void;
-}): { stop: () => void } {
-	const { root, intervalMs, staleThresholdMs, zombieThresholdMs, onHealthCheck } = options;
-	const sessionsPath = join(root, ".overstory", "sessions.json");
-
-	const thresholds = {
-		staleMs: staleThresholdMs,
-		zombieMs: zombieThresholdMs,
-	};
-
-	async function tick(): Promise<void> {
-		const sessions = await loadSessions(sessionsPath);
-		let updated = false;
-
-		for (const session of sessions) {
-			// Skip completed sessions — they are terminal and don't need monitoring
-			if (session.state === "completed") {
-				continue;
-			}
-
-			// ZFC: Don't skip zombies. Re-check tmux liveness on every tick.
-			// A zombie with a live tmux session needs investigation, not silence.
-
-			const tmuxAlive = await isSessionAlive(session.tmuxSession);
-			const check = evaluateHealth(session, tmuxAlive, thresholds);
-
-			// Transition state forward only (investigate action holds state)
-			const newState = transitionState(session.state, check);
-			if (newState !== session.state) {
-				session.state = newState;
-				updated = true;
-			}
-
-			if (onHealthCheck) {
-				onHealthCheck(check);
-			}
-
-			if (check.action === "terminate") {
-				// Kill the tmux session if it's still alive
-				if (tmuxAlive) {
-					try {
-						await killSession(session.tmuxSession);
-					} catch {
-						// Session may have died between check and kill — not an error
-					}
-				}
-				session.state = "zombie";
-				updated = true;
-			} else if (check.action === "investigate") {
-				// ZFC: tmux alive but sessions.json says zombie.
-				// Log the conflict but do NOT auto-kill.
-				// The onHealthCheck callback surfaces this to the operator.
-				// No state change — keep zombie until a human or higher-tier agent decides.
-			} else if (check.action === "escalate") {
-				// Delegate to Tier 2 AI triage
-				const verdict = await triageAgent({
-					agentName: session.agentName,
-					root,
-					lastActivity: session.lastActivity,
-				});
-
-				if (verdict === "terminate") {
-					if (tmuxAlive) {
-						try {
-							await killSession(session.tmuxSession);
-						} catch {
-							// Session may have died — not an error
-						}
-					}
-					session.state = "zombie";
-					updated = true;
-				}
-				// "retry" and "extend" leave the session running — no state change needed
-			}
-		}
-
-		if (updated) {
-			await saveSessions(sessionsPath, sessions);
-		}
-	}
+export function startDaemon(options: DaemonOptions & { intervalMs: number }): { stop: () => void } {
+	const { intervalMs } = options;
 
 	// Run the first tick immediately, then on interval
-	tick().catch(() => {
+	runDaemonTick(options).catch(() => {
 		// Swallow errors in the first tick — daemon must not crash
 	});
 
 	const interval = setInterval(() => {
-		tick().catch(() => {
+		runDaemonTick(options).catch(() => {
 			// Swallow errors in periodic ticks — daemon must not crash
 		});
 	}, intervalMs);
@@ -139,7 +101,243 @@ export function startDaemon(options: {
 }
 
 /**
+ * Run a single daemon tick. Exported for testing — allows direct invocation
+ * of the monitoring logic without starting the interval-based daemon loop.
+ *
+ * @param options - Same options as startDaemon (minus intervalMs)
+ */
+export async function runDaemonTick(options: DaemonOptions): Promise<void> {
+	const {
+		root,
+		staleThresholdMs,
+		zombieThresholdMs,
+		nudgeIntervalMs = 60_000,
+		tier1Enabled = false,
+		onHealthCheck,
+	} = options;
+	const tmux = options._tmux ?? { isSessionAlive, killSession };
+	const triage = options._triage ?? triageAgent;
+	const nudge = options._nudge ?? nudgeAgent;
+	const sessionsPath = join(root, ".overstory", "sessions.json");
+
+	const thresholds = {
+		staleMs: staleThresholdMs,
+		zombieMs: zombieThresholdMs,
+	};
+
+	const sessions = await loadSessions(sessionsPath);
+	let updated = false;
+
+	for (const session of sessions) {
+		// Skip completed sessions — they are terminal and don't need monitoring
+		if (session.state === "completed") {
+			continue;
+		}
+
+		// ZFC: Don't skip zombies. Re-check tmux liveness on every tick.
+		// A zombie with a live tmux session needs investigation, not silence.
+
+		const tmuxAlive = await tmux.isSessionAlive(session.tmuxSession);
+		const check = evaluateHealth(session, tmuxAlive, thresholds);
+
+		// Transition state forward only (investigate action holds state)
+		const newState = transitionState(session.state, check);
+		if (newState !== session.state) {
+			session.state = newState;
+			updated = true;
+		}
+
+		if (onHealthCheck) {
+			onHealthCheck(check);
+		}
+
+		if (check.action === "terminate") {
+			// Kill the tmux session if it's still alive
+			if (tmuxAlive) {
+				try {
+					await tmux.killSession(session.tmuxSession);
+				} catch {
+					// Session may have died between check and kill — not an error
+				}
+			}
+			session.state = "zombie";
+			// Reset escalation tracking on terminal state
+			session.escalationLevel = 0;
+			session.stalledSince = null;
+			updated = true;
+		} else if (check.action === "investigate") {
+			// ZFC: tmux alive but sessions.json says zombie.
+			// Log the conflict but do NOT auto-kill.
+			// The onHealthCheck callback surfaces this to the operator.
+			// No state change — keep zombie until a human or higher-tier agent decides.
+		} else if (check.action === "escalate") {
+			// Progressive nudging: increment escalation level based on elapsed time
+			// instead of immediately delegating to AI triage.
+
+			// Initialize stalledSince on first escalation detection
+			if (session.stalledSince === null) {
+				session.stalledSince = new Date().toISOString();
+				session.escalationLevel = 0;
+				updated = true;
+			}
+
+			// Check if enough time has passed to advance to the next escalation level
+			const stalledMs = Date.now() - new Date(session.stalledSince).getTime();
+			const expectedLevel = Math.min(Math.floor(stalledMs / nudgeIntervalMs), MAX_ESCALATION_LEVEL);
+
+			if (expectedLevel > session.escalationLevel) {
+				session.escalationLevel = expectedLevel;
+				updated = true;
+			}
+
+			// Execute the action for the current escalation level
+			const actionResult = await executeEscalationAction({
+				session,
+				root,
+				tmuxAlive,
+				tier1Enabled,
+				tmux,
+				triage,
+				nudge,
+			});
+
+			if (actionResult.terminated) {
+				session.state = "zombie";
+				session.escalationLevel = 0;
+				session.stalledSince = null;
+				updated = true;
+			} else if (actionResult.stateChanged) {
+				updated = true;
+			}
+		} else if (check.action === "none" && session.stalledSince !== null) {
+			// Agent recovered — reset escalation tracking
+			session.stalledSince = null;
+			session.escalationLevel = 0;
+			updated = true;
+		}
+	}
+
+	if (updated) {
+		await saveSessions(sessionsPath, sessions);
+	}
+}
+
+/**
+ * Execute the escalation action corresponding to the agent's current escalation level.
+ *
+ * Level 0 (warn):      No direct action — onHealthCheck callback already fired above.
+ * Level 1 (nudge):     Send a tmux nudge to the agent.
+ * Level 2 (escalate):  Invoke Tier 1 AI triage (if tier1Enabled; skip otherwise).
+ * Level 3 (terminate): Kill the tmux session.
+ *
+ * @returns Object indicating whether the agent was terminated or state changed.
+ */
+async function executeEscalationAction(ctx: {
+	session: AgentSession;
+	root: string;
+	tmuxAlive: boolean;
+	tier1Enabled: boolean;
+	tmux: {
+		isSessionAlive: (name: string) => Promise<boolean>;
+		killSession: (name: string) => Promise<void>;
+	};
+	triage: (options: {
+		agentName: string;
+		root: string;
+		lastActivity: string;
+	}) => Promise<"retry" | "terminate" | "extend">;
+	nudge: (
+		projectRoot: string,
+		agentName: string,
+		message: string,
+		force: boolean,
+	) => Promise<{ delivered: boolean; reason?: string }>;
+}): Promise<{ terminated: boolean; stateChanged: boolean }> {
+	const { session, root, tmuxAlive, tier1Enabled, tmux, triage, nudge } = ctx;
+
+	switch (session.escalationLevel) {
+		case 0: {
+			// Level 0: warn — onHealthCheck callback already fired, no direct action
+			return { terminated: false, stateChanged: false };
+		}
+
+		case 1: {
+			// Level 1: nudge — send a tmux nudge to the agent
+			try {
+				await nudge(
+					root,
+					session.agentName,
+					`[WATCHDOG] Agent "${session.agentName}" appears stalled. Please check your current task and report status.`,
+					true, // force — skip debounce for watchdog nudges
+				);
+			} catch {
+				// Nudge delivery failure is non-fatal for the watchdog
+			}
+			return { terminated: false, stateChanged: false };
+		}
+
+		case 2: {
+			// Level 2: escalate — invoke Tier 1 AI triage if enabled
+			if (!tier1Enabled) {
+				// Tier 1 disabled — skip triage, progressive nudging continues to level 3
+				return { terminated: false, stateChanged: false };
+			}
+
+			const verdict = await triage({
+				agentName: session.agentName,
+				root,
+				lastActivity: session.lastActivity,
+			});
+
+			if (verdict === "terminate") {
+				if (tmuxAlive) {
+					try {
+						await tmux.killSession(session.tmuxSession);
+					} catch {
+						// Session may have died — not an error
+					}
+				}
+				return { terminated: true, stateChanged: true };
+			}
+
+			if (verdict === "retry") {
+				// Send a nudge with a recovery message
+				try {
+					await nudge(
+						root,
+						session.agentName,
+						"[WATCHDOG] Triage suggests recovery is possible. " +
+							"Please retry your current operation or check for errors.",
+						true, // force — skip debounce
+					);
+				} catch {
+					// Nudge delivery failure is non-fatal
+				}
+			}
+
+			// "retry" (after nudge) and "extend" leave the session running
+			return { terminated: false, stateChanged: false };
+		}
+
+		default: {
+			// Level 3+: terminate — kill the tmux session
+			if (tmuxAlive) {
+				try {
+					await tmux.killSession(session.tmuxSession);
+				} catch {
+					// Session may have died — not an error
+				}
+			}
+			return { terminated: true, stateChanged: true };
+		}
+	}
+}
+
+/**
  * Load agent sessions from the sessions.json file.
+ *
+ * Ensures that loaded sessions have the escalationLevel and stalledSince
+ * fields (backward-compatible with sessions created before progressive nudging).
  *
  * @param sessionsPath - Absolute path to sessions.json
  * @returns Array of agent sessions, or empty array if the file doesn't exist
@@ -157,6 +355,16 @@ async function loadSessions(sessionsPath: string): Promise<AgentSession[]> {
 
 	if (!Array.isArray(parsed)) {
 		return [];
+	}
+
+	// Backfill escalation fields for sessions created before progressive nudging
+	for (const session of parsed as AgentSession[]) {
+		if (session.escalationLevel === undefined) {
+			session.escalationLevel = 0;
+		}
+		if (session.stalledSince === undefined) {
+			session.stalledSince = null;
+		}
 	}
 
 	return parsed as AgentSession[];

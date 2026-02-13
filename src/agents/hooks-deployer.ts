@@ -13,13 +13,14 @@ const NON_IMPLEMENTATION_CAPABILITIES = new Set([
 	"lead",
 	"coordinator",
 	"supervisor",
+	"monitor",
 ]);
 
 /**
  * Capabilities that coordinate work and need git add/commit for syncing
  * beads, mulch, and other metadata — but must NOT git push.
  */
-const COORDINATION_CAPABILITIES = new Set(["coordinator", "supervisor"]);
+const COORDINATION_CAPABILITIES = new Set(["coordinator", "supervisor", "monitor"]);
 
 /**
  * Additional safe Bash prefixes for coordination capabilities.
@@ -242,7 +243,7 @@ export function buildBashFileGuardScript(
 /**
  * Generate capability-specific PreToolUse guards.
  *
- * Non-implementation capabilities (scout, reviewer, lead, coordinator, supervisor) get:
+ * Non-implementation capabilities (scout, reviewer, lead, coordinator, supervisor, monitor) get:
  * - Write, Edit, NotebookEdit tool blocks
  * - Bash file-modification command guards (sed -i, echo >, mv, rm, etc.)
  * - Coordination capabilities (coordinator, supervisor) get git add/commit whitelisted

@@ -13,6 +13,7 @@ import { logCommand } from "./commands/log.ts";
 import { mailCommand } from "./commands/mail.ts";
 import { mergeCommand } from "./commands/merge.ts";
 import { metricsCommand } from "./commands/metrics.ts";
+import { monitorCommand } from "./commands/monitor.ts";
 import { nudgeCommand } from "./commands/nudge.ts";
 import { primeCommand } from "./commands/prime.ts";
 import { slingCommand } from "./commands/sling.ts";
@@ -36,6 +37,7 @@ Commands:
   coordinator <sub>       Persistent coordinator agent (start/stop/status)
   supervisor <sub>        Per-project supervisor agent (start/stop/status)
   mail <sub>              Mail system (send/check/list/read/reply)
+  monitor <sub>           Tier 2 monitor agent (start/stop/status)
   merge                   Merge agent branches into canonical
   nudge <agent> [msg]     Send a text nudge to an agent
   group <sub>             Task groups (create/status/add/remove/list)
@@ -57,6 +59,7 @@ const COMMANDS = [
 	"status",
 	"coordinator",
 	"supervisor",
+	"monitor",
 	"mail",
 	"merge",
 	"nudge",
@@ -133,6 +136,9 @@ async function main(): Promise<void> {
 			break;
 		case "supervisor":
 			await supervisorCommand(commandArgs);
+			break;
+		case "monitor":
+			await monitorCommand(commandArgs);
 			break;
 		case "mail":
 			await mailCommand(commandArgs);

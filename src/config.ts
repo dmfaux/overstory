@@ -35,11 +35,13 @@ export const DEFAULT_CONFIG: OverstoryConfig = {
 		reimagineEnabled: false,
 	},
 	watchdog: {
-		tier1Enabled: true,
-		tier1IntervalMs: 30_000,
-		tier2Enabled: false,
+		tier0Enabled: true, // Tier 0: Mechanical daemon
+		tier0IntervalMs: 30_000,
+		tier1Enabled: false, // Tier 1: Triage agent (AI analysis)
+		tier2Enabled: false, // Tier 2: Monitor agent (not yet implemented)
 		staleThresholdMs: 300_000, // 5 minutes
 		zombieThresholdMs: 600_000, // 10 minutes
+		nudgeIntervalMs: 60_000, // 1 minute between progressive nudge stages
 	},
 	logging: {
 		verbose: false,
@@ -239,6 +241,65 @@ function deepMerge(
 }
 
 /**
+ * Migrate deprecated watchdog tier key names in a parsed config object.
+ *
+ * Phase 4 renamed the watchdog tiers:
+ *   - Old "tier1" (mechanical daemon) → New "tier0"
+ *   - Old "tier2" (AI triage)         → New "tier1"
+ *
+ * Detection heuristic: if `tier0Enabled` is absent but `tier1Enabled` is present,
+ * this is an old-style config. A new-style config would have `tier0Enabled`.
+ *
+ * If old key names are present and new key names are absent, this function
+ * copies the values to the new keys, removes the old keys (to prevent collision
+ * with the renamed tiers), and logs a deprecation warning.
+ *
+ * Mutates the parsed config object in place.
+ */
+function migrateDeprecatedWatchdogKeys(parsed: Record<string, unknown>): void {
+	const watchdog = parsed.watchdog;
+	if (watchdog === null || watchdog === undefined || typeof watchdog !== "object") {
+		return;
+	}
+
+	const wd = watchdog as Record<string, unknown>;
+
+	// Detect old-style config: tier1Enabled present but tier0Enabled absent.
+	// In old naming, tier1 = mechanical daemon. In new naming, tier0 = mechanical daemon.
+	const isOldStyle = "tier1Enabled" in wd && !("tier0Enabled" in wd);
+
+	if (!isOldStyle) {
+		// New-style config or no tier keys at all — nothing to migrate
+		return;
+	}
+
+	// Old tier1Enabled → new tier0Enabled (mechanical daemon)
+	wd.tier0Enabled = wd.tier1Enabled;
+	wd.tier1Enabled = undefined;
+	process.stderr.write(
+		"[overstory] DEPRECATED: watchdog.tier1Enabled → use watchdog.tier0Enabled\n",
+	);
+
+	// Old tier1IntervalMs → new tier0IntervalMs (mechanical daemon)
+	if ("tier1IntervalMs" in wd) {
+		wd.tier0IntervalMs = wd.tier1IntervalMs;
+		wd.tier1IntervalMs = undefined;
+		process.stderr.write(
+			"[overstory] DEPRECATED: watchdog.tier1IntervalMs → use watchdog.tier0IntervalMs\n",
+		);
+	}
+
+	// Old tier2Enabled → new tier1Enabled (AI triage)
+	if ("tier2Enabled" in wd) {
+		wd.tier1Enabled = wd.tier2Enabled;
+		wd.tier2Enabled = undefined;
+		process.stderr.write(
+			"[overstory] DEPRECATED: watchdog.tier2Enabled → use watchdog.tier1Enabled\n",
+		);
+	}
+}
+
+/**
  * Validate that a config object has the required structure and sane values.
  * Throws ValidationError on failure.
  */
@@ -287,10 +348,17 @@ function validateConfig(config: OverstoryConfig): void {
 	}
 
 	// watchdog intervals must be positive if enabled
-	if (config.watchdog.tier1Enabled && config.watchdog.tier1IntervalMs <= 0) {
-		throw new ValidationError("watchdog.tier1IntervalMs must be positive when tier1 is enabled", {
-			field: "watchdog.tier1IntervalMs",
-			value: config.watchdog.tier1IntervalMs,
+	if (config.watchdog.tier0Enabled && config.watchdog.tier0IntervalMs <= 0) {
+		throw new ValidationError("watchdog.tier0IntervalMs must be positive when tier0 is enabled", {
+			field: "watchdog.tier0IntervalMs",
+			value: config.watchdog.tier0IntervalMs,
+		});
+	}
+
+	if (config.watchdog.nudgeIntervalMs <= 0) {
+		throw new ValidationError("watchdog.nudgeIntervalMs must be positive", {
+			field: "watchdog.nudgeIntervalMs",
+			value: config.watchdog.nudgeIntervalMs,
 		});
 	}
 
@@ -421,6 +489,11 @@ export async function loadConfig(projectRoot: string): Promise<OverstoryConfig> 
 			cause: err instanceof Error ? err : undefined,
 		});
 	}
+
+	// Backward compatibility: migrate deprecated watchdog tier key names.
+	// Old naming: tier1 = mechanical daemon, tier2 = AI triage
+	// New naming: tier0 = mechanical daemon, tier1 = AI triage, tier2 = monitor agent
+	migrateDeprecatedWatchdogKeys(parsed);
 
 	// Deep merge parsed config over defaults
 	const merged = deepMerge(

@@ -1,7 +1,7 @@
 /**
  * CLI command: overstory watch [--interval <ms>] [--background]
  *
- * Starts the watchdog daemon. Foreground mode shows real-time status.
+ * Starts the Tier 0 mechanical watchdog daemon. Foreground mode shows real-time status.
  * Background mode spawns a detached process via Bun.spawn and writes a PID file.
  * Interval configurable, default 30000ms.
  */
@@ -128,9 +128,15 @@ async function resolveOverstoryBin(): Promise<string> {
 /**
  * Entry point for `overstory watch [--interval <ms>] [--background]`.
  */
-const WATCH_HELP = `overstory watch — Start watchdog daemon
+const WATCH_HELP = `overstory watch — Start Tier 0 mechanical watchdog daemon
 
 Usage: overstory watch [--interval <ms>] [--background]
+
+Tier numbering:
+  Tier 0  Mechanical daemon (heartbeat, tmux/pid liveness) — this command
+  Tier 1  Triage agent (ephemeral AI analysis of stalled agents)
+  Tier 2  Monitor agent (continuous patrol — not yet implemented)
+  Tier 3  Supervisor monitors (per-project)
 
 Options:
   --interval <ms>    Health check interval in milliseconds (default: from config)
@@ -151,7 +157,7 @@ export async function watchCommand(args: string[]): Promise<void> {
 
 	const intervalMs = intervalStr
 		? Number.parseInt(intervalStr, 10)
-		: config.watchdog.tier1IntervalMs;
+		: config.watchdog.tier0IntervalMs;
 
 	const staleThresholdMs = config.watchdog.staleThresholdMs;
 	const zombieThresholdMs = config.watchdog.zombieThresholdMs;
@@ -218,6 +224,8 @@ export async function watchCommand(args: string[]): Promise<void> {
 		intervalMs,
 		staleThresholdMs,
 		zombieThresholdMs,
+		nudgeIntervalMs: config.watchdog.nudgeIntervalMs,
+		tier1Enabled: config.watchdog.tier1Enabled,
 		onHealthCheck(check) {
 			const timestamp = new Date().toISOString().slice(11, 19);
 			process.stdout.write(`[${timestamp}] ${formatCheck(check)}\n`);

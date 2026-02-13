@@ -40,6 +40,14 @@
 			"capabilities": ["merge", "resolve-conflicts"],
 			"canSpawn": false,
 			"constraints": []
+		},
+		"monitor": {
+			"file": "monitor.md",
+			"model": "sonnet",
+			"tools": ["Read", "Glob", "Grep", "Bash"],
+			"capabilities": ["monitor", "patrol"],
+			"canSpawn": false,
+			"constraints": ["read-only"]
 		}
 	},
 	"capabilityIndex": {
@@ -52,6 +60,8 @@
 		"validate": ["reviewer"],
 		"coordinate": ["lead"],
 		"merge": ["merger"],
-		"resolve-conflicts": ["merger"]
+		"resolve-conflicts": ["merger"],
+		"monitor": ["monitor"],
+		"patrol": ["monitor"]
 	}
 }

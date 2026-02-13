@@ -1,5 +1,5 @@
 /**
- * Tier 2 AI-assisted failure classification for stalled agents.
+ * Tier 1 AI-assisted failure classification for stalled agents.
  *
  * When an agent is detected as stalled, triage reads recent log entries and
  * uses Claude to classify the situation as recoverable, fatal, or long-running.

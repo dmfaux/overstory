@@ -29,11 +29,13 @@ export interface OverstoryConfig {
 		reimagineEnabled: boolean;
 	};
 	watchdog: {
-		tier1Enabled: boolean;
-		tier1IntervalMs: number; // Default 30_000
-		tier2Enabled: boolean;
+		tier0Enabled: boolean; // Tier 0: Mechanical daemon (heartbeat, tmux/pid liveness)
+		tier0IntervalMs: number; // Default 30_000
+		tier1Enabled: boolean; // Tier 1: Triage agent (ephemeral AI analysis)
+		tier2Enabled: boolean; // Tier 2: Monitor agent (continuous patrol — not yet implemented)
 		staleThresholdMs: number; // When to consider agent stale
 		zombieThresholdMs: number; // When to kill
+		nudgeIntervalMs: number; // Time between progressive nudge stages (default 60_000)
 	};
 	logging: {
 		verbose: boolean;
@@ -90,6 +92,8 @@ export interface AgentSession {
 	depth: number; // 0 = direct from orchestrator
 	startedAt: string;
 	lastActivity: string;
+	escalationLevel: number; // Progressive nudge stage: 0=warn, 1=nudge, 2=escalate, 3=terminate
+	stalledSince: string | null; // ISO timestamp when agent first entered stalled state
 }
 
 // === Agent Identity ===

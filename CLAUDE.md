@@ -64,6 +64,7 @@ overstory/                        # This repo (the overstory tool itself)
       worktree.ts                 # overstory worktree list/clean
       log.ts                      # overstory log (hook target)
       watch.ts                    # overstory watch (watchdog)
+      monitor.ts                  # overstory monitor start/stop/status (Tier 2)
       metrics.ts                  # overstory metrics
     agents/                       # Agent lifecycle management
       manifest.ts                 # Agent registry (load + query capabilities)
@@ -85,8 +86,8 @@ overstory/                        # This repo (the overstory tool itself)
       queue.ts                    # FIFO merge queue
       resolver.ts                 # Tiered conflict resolution (4 tiers)
     watchdog/
-      daemon.ts                   # Tier 1: mechanical process monitoring
-      triage.ts                   # Tier 2: AI-assisted failure classification
+      daemon.ts                   # Tier 0: mechanical process monitoring
+      triage.ts                   # Tier 1: AI-assisted failure classification
       health.ts                   # Health check definitions + state machine
     logging/
       logger.ts                   # Multi-format logger (human + NDJSON)
@@ -101,6 +102,7 @@ overstory/                        # This repo (the overstory tool itself)
     reviewer.md                   # Read-only validation
     lead.md                       # Team lead (can spawn sub-workers)
     merger.md                     # Branch merge specialist
+    monitor.md                    # Tier 2 continuous fleet patrol
   templates/
     CLAUDE.md.tmpl                # Template for orchestrator CLAUDE.md
     overlay.md.tmpl               # Template for per-worker overlay
@@ -238,8 +240,13 @@ overstory log <event>                   Log an event (called by hooks)
   --agent <name>
   Events: tool-start, tool-end, session-end
 
-overstory watch                         Start watchdog daemon
+overstory watch                         Start watchdog daemon (Tier 0)
   --interval <ms>  --background
+
+overstory monitor                       Manage Tier 2 monitor agent
+  start                                   Start monitor (spawns Claude Code at root)
+  stop                                    Stop monitor (kills tmux session)
+  status                                  Show monitor state
 
 overstory metrics                       Show session metrics
   --last <n>  --json

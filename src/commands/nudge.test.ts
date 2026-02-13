@@ -47,6 +47,8 @@ function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
 		depth: 0,
 		startedAt: new Date().toISOString(),
 		lastActivity: new Date().toISOString(),
+		escalationLevel: 0,
+		stalledSince: null,
 		...overrides,
 	};
 }

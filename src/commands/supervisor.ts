@@ -248,6 +248,8 @@ async function startSupervisor(args: string[]): Promise<void> {
 		depth: flags.depth,
 		startedAt: new Date().toISOString(),
 		lastActivity: new Date().toISOString(),
+		escalationLevel: 0,
+		stalledSince: null,
 	};
 
 	sessions.push(session);

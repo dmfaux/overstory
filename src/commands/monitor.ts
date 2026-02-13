@@ -1,15 +1,16 @@
 /**
- * CLI command: overstory coordinator start|stop|status
+ * CLI command: overstory monitor start|stop|status
  *
- * Manages the persistent coordinator agent lifecycle. The coordinator runs
- * at the project root (NOT in a worktree), receives work via mail and beads,
- * and dispatches agents via overstory sling.
+ * Manages the persistent Tier 2 monitor agent lifecycle. The monitor runs
+ * at the project root (NOT in a worktree), continuously patrols the agent
+ * fleet, sends nudges to stalled agents, and reports health summaries to
+ * the coordinator.
  *
- * Unlike regular agents spawned by sling, the coordinator:
+ * Unlike regular agents spawned by sling, the monitor:
  * - Has no worktree (operates on the main working tree)
- * - Has no bead assignment (it creates beads, not works on them)
- * - Has no overlay CLAUDE.md (context comes via mail + beads + checkpoints)
- * - Persists across work batches
+ * - Has no bead assignment (it monitors, not implements)
+ * - Has no overlay CLAUDE.md (context comes via overstory status + mail)
+ * - Persists across patrol cycles
  */
 
 import { mkdir } from "node:fs/promises";
@@ -21,16 +22,16 @@ import { AgentError, ValidationError } from "../errors.ts";
 import type { AgentSession } from "../types.ts";
 import { createSession, isSessionAlive, killSession, sendKeys } from "../worktree/tmux.ts";
 
-/** Default coordinator agent name. */
-const COORDINATOR_NAME = "coordinator";
+/** Default monitor agent name. */
+const MONITOR_NAME = "monitor";
 
-/** Tmux session name for the coordinator. */
-const TMUX_SESSION = `overstory-${COORDINATOR_NAME}`;
+/** Tmux session name for the monitor. */
+const TMUX_SESSION = `overstory-${MONITOR_NAME}`;
 
 /**
  * Load sessions registry from .overstory/sessions.json.
  */
-export async function loadSessions(sessionsPath: string): Promise<AgentSession[]> {
+async function loadSessions(sessionsPath: string): Promise<AgentSession[]> {
 	const file = Bun.file(sessionsPath);
 	if (!(await file.exists())) {
 		return [];
@@ -46,76 +47,75 @@ export async function loadSessions(sessionsPath: string): Promise<AgentSession[]
 /**
  * Save sessions registry to .overstory/sessions.json.
  */
-export async function saveSessions(sessionsPath: string, sessions: AgentSession[]): Promise<void> {
+async function saveSessions(sessionsPath: string, sessions: AgentSession[]): Promise<void> {
 	await Bun.write(sessionsPath, `${JSON.stringify(sessions, null, "\t")}\n`);
 }
 
 /**
- * Find the active coordinator session (if any).
+ * Find the active monitor session (if any).
  */
-function findCoordinatorSession(sessions: AgentSession[]): AgentSession | undefined {
+function findMonitorSession(sessions: AgentSession[]): AgentSession | undefined {
 	return sessions.find(
 		(s) =>
-			s.agentName === COORDINATOR_NAME &&
-			s.capability === "coordinator" &&
+			s.agentName === MONITOR_NAME &&
+			s.capability === "monitor" &&
 			s.state !== "completed" &&
 			s.state !== "zombie",
 	);
 }
 
 /**
- * Build the coordinator startup beacon — the first message sent to the coordinator
+ * Build the monitor startup beacon — the first message sent to the monitor
  * via tmux send-keys after Claude Code initializes.
  */
-export function buildCoordinatorBeacon(): string {
+export function buildMonitorBeacon(): string {
 	const timestamp = new Date().toISOString();
 	const parts = [
-		`[OVERSTORY] ${COORDINATOR_NAME} (coordinator) ${timestamp}`,
-		"Depth: 0 | Parent: none | Role: persistent orchestrator",
-		`Startup: run mulch prime, check mail (overstory mail check --agent ${COORDINATOR_NAME}), check bd ready, check overstory group status, then await instructions`,
+		`[OVERSTORY] ${MONITOR_NAME} (monitor/tier-2) ${timestamp}`,
+		"Depth: 0 | Parent: none | Role: continuous fleet patrol",
+		`Startup: run mulch prime, check fleet (overstory status --json), check mail (overstory mail check --agent ${MONITOR_NAME}), then begin patrol loop`,
 	];
 	return parts.join(" — ");
 }
 
 /**
- * Start the coordinator agent.
- *
- * 1. Verify no coordinator is already running
- * 2. Load config
- * 3. Deploy hooks to project root's .claude/ (coordinator-specific guards)
- * 4. Create agent identity (if first time)
- * 5. Spawn tmux session at project root with Claude Code
- * 6. Send startup beacon
- * 7. Record session in sessions.json
- */
-/**
  * Determine whether to auto-attach to the tmux session after starting.
- * Exported for testing.
  */
-export function resolveAttach(args: string[], isTTY: boolean): boolean {
+function resolveAttach(args: string[], isTTY: boolean): boolean {
 	if (args.includes("--attach")) return true;
 	if (args.includes("--no-attach")) return false;
 	return isTTY;
 }
 
-async function startCoordinator(args: string[]): Promise<void> {
+/**
+ * Start the monitor agent.
+ *
+ * 1. Verify no monitor is already running
+ * 2. Load config
+ * 3. Deploy hooks to project root's .claude/ (monitor-specific guards)
+ * 4. Create agent identity (if first time)
+ * 5. Spawn tmux session at project root with Claude Code
+ * 6. Send startup beacon
+ * 7. Record session in sessions.json
+ */
+async function startMonitor(args: string[]): Promise<void> {
 	const json = args.includes("--json");
 	const shouldAttach = resolveAttach(args, !!process.stdout.isTTY);
 	const cwd = process.cwd();
 	const config = await loadConfig(cwd);
 	const projectRoot = config.project.root;
 
-	// Check for existing coordinator
+	// Check for existing monitor
 	const sessionsPath = join(projectRoot, ".overstory", "sessions.json");
 	const sessions = await loadSessions(sessionsPath);
-	const existing = findCoordinatorSession(sessions);
+	const existing = findMonitorSession(sessions);
 
 	if (existing) {
 		const alive = await isSessionAlive(existing.tmuxSession);
 		if (alive) {
 			throw new AgentError(
-				`Coordinator is already running (tmux: ${existing.tmuxSession}, since: ${existing.startedAt})`,
-				{ agentName: COORDINATOR_NAME },
+				`Monitor is already running (tmux: ${existing.tmuxSession}, since: ${existing.startedAt})`,
+				{ agentName: MONITOR_NAME },
 			);
 		}
 		// Session recorded but tmux is dead — mark as completed and continue
@@ -123,19 +123,19 @@ async function startCoordinator(args: string[]): Promise<void> {
 		await saveSessions(sessionsPath, sessions);
 	}
 
-	// Deploy coordinator-specific hooks to the project root's .claude/ directory.
-	// The coordinator gets the same structural enforcement as other non-implementation
+	// Deploy monitor-specific hooks to the project root's .claude/ directory.
+	// The monitor gets the same structural enforcement as other non-implementation
 	// agents (Write/Edit/NotebookEdit blocked, dangerous bash commands blocked).
-	await deployHooks(projectRoot, COORDINATOR_NAME, "coordinator");
+	await deployHooks(projectRoot, MONITOR_NAME, "monitor");
 
-	// Create coordinator identity if first run
+	// Create monitor identity if first run
 	const identityBaseDir = join(projectRoot, ".overstory", "agents");
 	await mkdir(identityBaseDir, { recursive: true });
-	const existingIdentity = await loadIdentity(identityBaseDir, COORDINATOR_NAME);
+	const existingIdentity = await loadIdentity(identityBaseDir, MONITOR_NAME);
 	if (!existingIdentity) {
 		await createIdentity(identityBaseDir, {
-			name: COORDINATOR_NAME,
-			capability: "coordinator",
+			name: MONITOR_NAME,
+			capability: "monitor",
 			created: new Date().toISOString(),
 			sessionsCompleted: 0,
 			expertiseDomains: config.mulch.enabled ? config.mulch.domains : [],
@@ -144,26 +144,24 @@ async function startCoordinator(args: string[]): Promise<void> {
 	}
 
 	// Spawn tmux session at project root with Claude Code (interactive mode)
-	const claudeCmd = "claude --model opus --dangerously-skip-permissions";
+	const claudeCmd = "claude --model sonnet --dangerously-skip-permissions";
 	const pid = await createSession(TMUX_SESSION, projectRoot, claudeCmd, {
-		OVERSTORY_AGENT_NAME: COORDINATOR_NAME,
+		OVERSTORY_AGENT_NAME: MONITOR_NAME,
 	});
 
 	// Record session BEFORE sending the beacon so that hook-triggered
 	// updateLastActivity() can find the entry and transition booting->working.
-	// Without this, a race exists: hooks fire before sessions.json is written,
-	// leaving the coordinator stuck in "booting" (overstory-036f).
 	const session: AgentSession = {
-		id: `session-${Date.now()}-${COORDINATOR_NAME}`,
-		agentName: COORDINATOR_NAME,
-		capability: "coordinator",
-		worktreePath: projectRoot, // Coordinator uses project root, not a worktree
+		id: `session-${Date.now()}-${MONITOR_NAME}`,
+		agentName: MONITOR_NAME,
+		capability: "monitor",
+		worktreePath: projectRoot, // Monitor uses project root, not a worktree
 		branchName: config.project.canonicalBranch, // Operates on canonical branch
 		beadId: "", // No specific bead assignment
 		tmuxSession: TMUX_SESSION,
 		state: "booting",
 		pid,
-		parentAgent: null, // Top of hierarchy
+		parentAgent: null, // Top of hierarchy (alongside coordinator)
 		depth: 0,
 		startedAt: new Date().toISOString(),
 		lastActivity: new Date().toISOString(),
@@ -176,7 +174,7 @@ async function startCoordinator(args: string[]): Promise<void> {
 
 	// Send beacon after TUI initialization delay
 	await Bun.sleep(3_000);
-	const beacon = buildCoordinatorBeacon();
+	const beacon = buildMonitorBeacon();
 	await sendKeys(TMUX_SESSION, beacon);
 
 	// Follow-up Enter to ensure submission (same pattern as sling.ts)
@@ -184,8 +182,8 @@ async function startCoordinator(args: string[]): Promise<void> {
 	await sendKeys(TMUX_SESSION, "");
 
 	const output = {
-		agentName: COORDINATOR_NAME,
-		capability: "coordinator",
+		agentName: MONITOR_NAME,
+		capability: "monitor",
 		tmuxSession: TMUX_SESSION,
 		projectRoot,
 		pid,
@@ -194,7 +192,7 @@ async function startCoordinator(args: string[]): Promise<void> {
 	if (json) {
 		process.stdout.write(`${JSON.stringify(output)}\n`);
 	} else {
-		process.stdout.write("Coordinator started\n");
+		process.stdout.write("Monitor started\n");
 		process.stdout.write(`  Tmux:    ${TMUX_SESSION}\n`);
 		process.stdout.write(`  Root:    ${projectRoot}\n`);
 		process.stdout.write(`  PID:     ${pid}\n`);
@@ -208,13 +206,13 @@ async function startCoordinator(args: string[]): Promise<void> {
 }
 
 /**
- * Stop the coordinator agent.
+ * Stop the monitor agent.
  *
- * 1. Find the active coordinator session
+ * 1. Find the active monitor session
  * 2. Kill the tmux session (with process tree cleanup)
  * 3. Mark session as completed in sessions.json
  */
-async function stopCoordinator(args: string[]): Promise<void> {
+async function stopMonitor(args: string[]): Promise<void> {
 	const json = args.includes("--json");
 	const cwd = process.cwd();
 	const config = await loadConfig(cwd);
@@ -222,11 +220,11 @@ async function stopCoordinator(args: string[]): Promise<void> {
 
 	const sessionsPath = join(projectRoot, ".overstory", "sessions.json");
 	const sessions = await loadSessions(sessionsPath);
-	const session = findCoordinatorSession(sessions);
+	const session = findMonitorSession(sessions);
 
 	if (!session) {
-		throw new AgentError("No active coordinator session found", {
-			agentName: COORDINATOR_NAME,
+		throw new AgentError("No active monitor session found", {
+			agentName: MONITOR_NAME,
 		});
 	}
 
@@ -244,16 +242,16 @@ async function stopCoordinator(args: string[]): Promise<void> {
 	if (json) {
 		process.stdout.write(`${JSON.stringify({ stopped: true, sessionId: session.id })}\n`);
 	} else {
-		process.stdout.write(`Coordinator stopped (session: ${session.id})\n`);
+		process.stdout.write(`Monitor stopped (session: ${session.id})\n`);
 	}
 }
 
 /**
- * Show coordinator status.
+ * Show monitor status.
  *
  * Checks session registry and tmux liveness to report actual state.
  */
-async function statusCoordinator(args: string[]): Promise<void> {
+async function statusMonitor(args: string[]): Promise<void> {
 	const json = args.includes("--json");
 	const cwd = process.cwd();
 	const config = await loadConfig(cwd);
@@ -261,13 +259,13 @@ async function statusCoordinator(args: string[]): Promise<void> {
 
 	const sessionsPath = join(projectRoot, ".overstory", "sessions.json");
 	const sessions = await loadSessions(sessionsPath);
-	const session = findCoordinatorSession(sessions);
+	const session = findMonitorSession(sessions);
 
 	if (!session) {
 		if (json) {
 			process.stdout.write(`${JSON.stringify({ running: false })}\n`);
 		} else {
-			process.stdout.write("Coordinator is not running\n");
+			process.stdout.write("Monitor is not running\n");
 		}
 		return;
 	}
@@ -295,7 +293,7 @@ async function statusCoordinator(args: string[]): Promise<void> {
 		process.stdout.write(`${JSON.stringify(status)}\n`);
 	} else {
 		const stateLabel = alive ? "running" : session.state;
-		process.stdout.write(`Coordinator: ${stateLabel}\n`);
+		process.stdout.write(`Monitor: ${stateLabel}\n`);
 		process.stdout.write(`  Session:   ${session.id}\n`);
 		process.stdout.write(`  Tmux:      ${session.tmuxSession}\n`);
 		process.stdout.write(`  PID:       ${session.pid}\n`);
@@ -304,14 +302,14 @@ async function statusCoordinator(args: string[]): Promise<void> {
 	}
 }
 
-const COORDINATOR_HELP = `overstory coordinator — Manage the persistent coordinator agent
+const MONITOR_HELP = `overstory monitor — Manage the persistent Tier 2 monitor agent
 
-Usage: overstory coordinator <subcommand> [flags]
+Usage: overstory monitor <subcommand> [flags]
 
 Subcommands:
-  start                    Start the coordinator (spawns Claude Code at project root)
-  stop                     Stop the coordinator (kills tmux session)
-  status                   Show coordinator state
+  start                    Start the monitor (spawns Claude Code at project root)
+  stop                     Stop the monitor (kills tmux session)
+  status                   Show monitor state
 
 Start options:
   --attach                 Always attach to tmux session after start
@@ -322,18 +320,18 @@ General options:
   --json                   Output as JSON
   --help, -h               Show this help
 
-The coordinator runs at the project root and orchestrates work by:
-  - Decomposing objectives into beads issues
-  - Dispatching agents via overstory sling
-  - Tracking batches via task groups
-  - Handling escalations from agents and watchdog`;
+The monitor agent (Tier 2) continuously patrols the agent fleet by:
+  - Checking agent health via overstory status
+  - Sending progressive nudges to stalled agents
+  - Escalating unresponsive agents to the coordinator
+  - Producing periodic health summaries`;
 
 /**
- * Entry point for `overstory coordinator <subcommand>`.
+ * Entry point for `overstory monitor <subcommand>`.
  */
-export async function coordinatorCommand(args: string[]): Promise<void> {
+export async function monitorCommand(args: string[]): Promise<void> {
 	if (args.includes("--help") || args.includes("-h") || args.length === 0) {
-		process.stdout.write(`${COORDINATOR_HELP}\n`);
+		process.stdout.write(`${MONITOR_HELP}\n`);
 		return;
 	}
 
@@ -342,17 +340,17 @@ export async function coordinatorCommand(args: string[]): Promise<void> {
 
 	switch (subcommand) {
 		case "start":
-			await startCoordinator(subArgs);
+			await startMonitor(subArgs);
 			break;
 		case "stop":
-			await stopCoordinator(subArgs);
+			await stopMonitor(subArgs);
 			break;
 		case "status":
-			await statusCoordinator(subArgs);
+			await statusMonitor(subArgs);
 			break;
 		default:
 			throw new ValidationError(
-				`Unknown coordinator subcommand: ${subcommand}. Run 'overstory coordinator --help' for usage.`,
+				`Unknown monitor subcommand: ${subcommand}. Run 'overstory monitor --help' for usage.`,
 				{ field: "subcommand", value: subcommand },
 			);
 	}
