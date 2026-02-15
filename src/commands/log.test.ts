@@ -558,6 +558,86 @@ describe("logCommand", () => {
 
 		expect(out).toContain("--stdin");
 	});
+
+	test("session-end does not crash when mulch learn fails", async () => {
+		// Create sessions.db with a builder agent (non-persistent)
+		const dbPath = join(tempDir, ".overstory", "sessions.db");
+		const session: AgentSession = {
+			id: "session-mulch-fail",
+			agentName: "mulch-fail-agent",
+			capability: "builder",
+			worktreePath: tempDir,
+			branchName: "mulch-fail-branch",
+			beadId: "bead-mulch-001",
+			tmuxSession: "overstory-mulch-fail",
+			state: "working",
+			pid: 55555,
+			parentAgent: "parent-agent",
+			depth: 1,
+			runId: null,
+			startedAt: new Date().toISOString(),
+			lastActivity: new Date().toISOString(),
+			escalationLevel: 0,
+			stalledSince: null,
+		};
+		const store = createSessionStore(dbPath);
+		store.upsert(session);
+		store.close();
+
+		// session-end should complete without throwing even if mulch learn fails
+		await expect(
+			logCommand(["session-end", "--agent", "mulch-fail-agent"]),
+		).resolves.toBeUndefined();
+
+		// Verify state transitioned to completed
+		const readStore = createSessionStore(dbPath);
+		const updatedSession = readStore.getByName("mulch-fail-agent");
+		readStore.close();
+
+		expect(updatedSession).toBeDefined();
+		expect(updatedSession?.state).toBe("completed");
+	});
+
+	test("session-end skips mulch learn for coordinator (persistent agent)", async () => {
+		// Create sessions.db with a coordinator agent
+		const dbPath = join(tempDir, ".overstory", "sessions.db");
+		const session: AgentSession = {
+			id: "session-coord-mulch",
+			agentName: "coordinator-mulch",
+			capability: "coordinator",
+			worktreePath: tempDir,
+			branchName: "main",
+			beadId: "",
+			tmuxSession: "overstory-coordinator-mulch",
+			state: "working",
+			pid: 66666,
+			parentAgent: null,
+			depth: 0,
+			runId: null,
+			startedAt: new Date().toISOString(),
+			lastActivity: new Date().toISOString(),
+			escalationLevel: 0,
+			stalledSince: null,
+		};
+		const store = createSessionStore(dbPath);
+		store.upsert(session);
+		store.close();
+
+		await logCommand(["session-end", "--agent", "coordinator-mulch"]);
+
+		// Verify no mail.db was created (mulch learn was skipped)
+		const mailDbPath = join(tempDir, ".overstory", "mail.db");
+		const mailDbFile = Bun.file(mailDbPath);
+		expect(await mailDbFile.exists()).toBe(false);
+
+		// Coordinator should remain working (persistent agent)
+		const readStore = createSessionStore(dbPath);
+		const updatedSession = readStore.getByName("coordinator-mulch");
+		readStore.close();
+
+		expect(updatedSession).toBeDefined();
+		expect(updatedSession?.state).toBe("working");
+	});
 });
 
 /**

@@ -17,8 +17,11 @@ import { ValidationError } from "../errors.ts";
 import { createEventStore } from "../events/store.ts";
 import { filterToolArgs } from "../events/tool-filter.ts";
 import { createLogger } from "../logging/logger.ts";
+import { createMailClient } from "../mail/client.ts";
+import { createMailStore } from "../mail/store.ts";
 import { createMetricsStore } from "../metrics/store.ts";
 import { estimateCost, parseTranscriptUsage } from "../metrics/transcript.ts";
+import { createMulchClient } from "../mulch/client.ts";
 import { openSessionStore } from "../sessions/compat.ts";
 import type { AgentSession } from "../types.ts";
 
@@ -396,6 +399,41 @@ export async function logCommand(args: string[]): Promise<void> {
 						metricsStore.close();
 					} catch {
 						// Non-fatal: metrics recording should not break session-end handling
+					}
+
+					// Extract learning suggestions via mulch learn (post-session).
+					// Skip persistent agents whose Stop hook fires every turn.
+					if (!PERSISTENT_CAPABILITIES.has(agentSession.capability)) {
+						try {
+							const mulchClient = createMulchClient(config.project.root);
+							const learnResult = await mulchClient.learn({ since: "HEAD~1" });
+							if (learnResult.suggestedDomains.length > 0 || learnResult.changedFiles.length > 0) {
+								const mailDbPath = join(config.project.root, ".overstory", "mail.db");
+								const mailStore = createMailStore(mailDbPath);
+								const mailClient = createMailClient(mailStore);
+								const recipient = agentSession.parentAgent ?? "orchestrator";
+								const domainsList = learnResult.suggestedDomains.join(", ");
+								const filesList = learnResult.changedFiles.join(", ");
+								let body = "Session completed. Mulch detected changes worth recording.";
+								if (learnResult.suggestedDomains.length > 0) {
+									body += `\n\nSuggested domains: ${domainsList}`;
+								}
+								if (learnResult.changedFiles.length > 0) {
+									body += `\n\nChanged files: ${filesList}`;
+								}
+								mailClient.send({
+									from: agentName,
+									to: recipient,
+									subject: `mulch_learn: learning suggestions from ${agentName}`,
+									body,
+									type: "status",
+									priority: "low",
+								});
+								mailClient.close();
+							}
+						} catch {
+							// Non-fatal: mulch learn should not break session-end handling
+						}
 					}
 				}
 
