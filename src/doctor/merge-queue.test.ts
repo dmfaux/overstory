@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MergeEntry, OverstoryConfig } from "../types.ts";
-import type { DoctorCheck } from "./types.ts";
 import { checkMergeQueue } from "./merge-queue.ts";
+import type { DoctorCheck } from "./types.ts";
 
 describe("checkMergeQueue", () => {
 	let tempDir: string;

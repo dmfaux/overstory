@@ -128,7 +128,8 @@ export const checkDatabases: DoctorCheckFn = (_config, overstoryDir): DoctorChec
 				}
 
 				// Check columns if table exists
-				const requiredCols = dbSpec.requiredColumns[tableName as keyof typeof dbSpec.requiredColumns];
+				const requiredCols =
+					dbSpec.requiredColumns[tableName as keyof typeof dbSpec.requiredColumns];
 				if (requiredCols) {
 					const columns = db.prepare<{ name: string }, []>(`PRAGMA table_info(${tableName})`).all();
 					const existingCols = new Set(columns.map((c) => c.name));

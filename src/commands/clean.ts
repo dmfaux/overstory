@@ -321,9 +321,7 @@ async function deleteFile(path: string): Promise<boolean> {
  *
  * This is informational only — no data is modified.
  */
-async function checkMulchHealth(
-	repoRoot: string,
-): Promise<{
+async function checkMulchHealth(repoRoot: string): Promise<{
 	domainsNearLimit: Array<{ domain: string; recordCount: number; warnThreshold: number }>;
 	stalePruneCandidates: number;
 	doctorIssues: number;
