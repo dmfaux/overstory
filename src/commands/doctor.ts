@@ -57,7 +57,11 @@ function getFlag(args: string[], flag: string): string | undefined {
 /**
  * Format human-readable output for doctor checks.
  */
-function printHumanReadable(checks: DoctorCheck[], verbose: boolean): void {
+function printHumanReadable(
+	checks: DoctorCheck[],
+	verbose: boolean,
+	checkRegistry: Array<{ category: DoctorCategory; fn: DoctorCheckFn }>,
+): void {
 	const w = process.stdout.write.bind(process.stdout);
 
 	w(`${ANSI.bold}Overstory Doctor${ANSI.reset}\n`);
@@ -75,7 +79,7 @@ function printHumanReadable(checks: DoctorCheck[], verbose: boolean): void {
 	}
 
 	// Print each category
-	for (const { category } of ALL_CHECKS) {
+	for (const { category } of checkRegistry) {
 		const categoryChecks = byCategory.get(category) ?? [];
 		if (categoryChecks.length === 0 && !verbose) {
 			continue; // Skip empty categories unless verbose
@@ -151,10 +155,19 @@ Options:
 
 Categories: dependencies, structure, config, databases, consistency, agents, merge, logs, version`;
 
+/** Options for dependency injection in doctorCommand. */
+export interface DoctorCommandOptions {
+	/** Override the check runners (defaults to ALL_CHECKS). Pass [] to skip all checks. */
+	checkRunners?: Array<{ category: DoctorCategory; fn: DoctorCheckFn }>;
+}
+
 /**
  * Entry point for `overstory doctor [--json] [--verbose] [--category <name>]`.
  */
-export async function doctorCommand(args: string[]): Promise<void> {
+export async function doctorCommand(
+	args: string[],
+	options?: DoctorCommandOptions,
+): Promise<void> {
 	if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
 		process.stdout.write(`${DOCTOR_HELP}\n`);
 		return;
@@ -183,9 +196,10 @@ export async function doctorCommand(args: string[]): Promise<void> {
 	const overstoryDir = join(config.project.root, ".overstory");
 
 	// Filter checks by category if specified
+	const allChecks = options?.checkRunners ?? ALL_CHECKS;
 	const checksToRun = categoryFilter
-		? ALL_CHECKS.filter((c) => c.category === categoryFilter)
-		: ALL_CHECKS;
+		? allChecks.filter((c) => c.category === categoryFilter)
+		: allChecks;
 
 	// Run all checks sequentially
 	const results: DoctorCheck[] = [];
@@ -198,7 +212,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
 	if (json) {
 		printJSON(results);
 	} else {
-		printHumanReadable(results, verbose);
+		printHumanReadable(results, verbose, allChecks);
 	}
 
 	// Set exit code to 1 if any check failed

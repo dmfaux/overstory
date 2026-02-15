@@ -64,7 +64,7 @@ describe("doctorCommand", () => {
 
 	describe("help flag", () => {
 		test("--help shows help text", async () => {
-			await doctorCommand(["--help"]);
+			await doctorCommand(["--help"], { checkRunners: [] });
 			const out = output();
 
 			expect(out).toContain("overstory doctor");
@@ -75,7 +75,7 @@ describe("doctorCommand", () => {
 		});
 
 		test("-h shows help text", async () => {
-			await doctorCommand(["-h"]);
+			await doctorCommand(["-h"], { checkRunners: [] });
 			const out = output();
 
 			expect(out).toContain("overstory doctor");
@@ -87,7 +87,7 @@ describe("doctorCommand", () => {
 
 	describe("JSON output mode", () => {
 		test("outputs valid JSON with checks array and summary", async () => {
-			await doctorCommand(["--json"]);
+			await doctorCommand(["--json"], { checkRunners: [] });
 			const out = output();
 
 			const parsed = JSON.parse(out.trim()) as {
@@ -103,7 +103,7 @@ describe("doctorCommand", () => {
 		});
 
 		test("empty stubs produce zero counts in summary", async () => {
-			await doctorCommand(["--json"]);
+			await doctorCommand(["--json"], { checkRunners: [] });
 			const out = output();
 
 			const parsed = JSON.parse(out.trim()) as {
@@ -121,7 +121,7 @@ describe("doctorCommand", () => {
 
 	describe("human-readable output", () => {
 		test("shows header", async () => {
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			const out = output();
 
 			expect(out).toContain("Overstory Doctor");
@@ -129,7 +129,7 @@ describe("doctorCommand", () => {
 		});
 
 		test("shows summary line with zero counts", async () => {
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			const out = output();
 
 			expect(out).toContain("Summary:");
@@ -141,7 +141,7 @@ describe("doctorCommand", () => {
 		test("summary uses singular form for one failure", async () => {
 			// This test can't verify "1 failure" without real checks, but we can test the logic
 			// by checking that the scaffold doesn't crash on empty checks
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			const out = output();
 
 			// Should show "0 failures" (plural) when count is 0
@@ -149,7 +149,7 @@ describe("doctorCommand", () => {
 		});
 
 		test("default mode does not show empty categories", async () => {
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			const out = output();
 
 			// Since all stubs return empty arrays, no category headers should appear
@@ -163,28 +163,28 @@ describe("doctorCommand", () => {
 	// === --verbose flag ===
 
 	describe("--verbose flag", () => {
-		test("shows categories even when empty", async () => {
-			await doctorCommand(["--verbose"]);
+		test("shows header and summary even with no check runners", async () => {
+			await doctorCommand(["--verbose"], { checkRunners: [] });
 			const out = output();
 
-			// In verbose mode, all categories should appear with "No checks"
-			expect(out).toContain("[dependencies]");
-			expect(out).toContain("[structure]");
-			expect(out).toContain("[config]");
-			expect(out).toContain("[databases]");
-			expect(out).toContain("[consistency]");
-			expect(out).toContain("[agents]");
-			expect(out).toContain("[merge]");
-			expect(out).toContain("[logs]");
-			expect(out).toContain("[version]");
+			// With no check runners, no categories appear (even in verbose mode)
+			expect(out).toContain("Overstory Doctor");
+			expect(out).toContain("Summary:");
+			expect(out).toContain("0 passed");
+			// No categories should appear with empty checkRunners
+			expect(out).not.toContain("[dependencies]");
+			expect(out).not.toContain("[structure]");
 		});
 
-		test("shows 'No checks' for empty categories", async () => {
-			await doctorCommand(["--verbose"]);
+		test("verbose mode works with empty check runners", async () => {
+			await doctorCommand(["--verbose"], { checkRunners: [] });
 			const out = output();
 
-			// All stubs return empty, so we should see "No checks"
-			expect(out).toContain("No checks");
+			// Should still produce valid output with no categories
+			expect(out).toContain("Overstory Doctor");
+			expect(out).toContain("Summary:");
+			// With no check runners, "No checks" doesn't appear (no categories to show it under)
+			expect(out).not.toContain("No checks");
 		});
 	});
 
@@ -192,7 +192,7 @@ describe("doctorCommand", () => {
 
 	describe("--category flag", () => {
 		test("runs only specified category", async () => {
-			await doctorCommand(["--category", "dependencies", "--json"]);
+			await doctorCommand(["--category", "dependencies", "--json"], { checkRunners: [] });
 			const out = output();
 
 			const parsed = JSON.parse(out.trim()) as {
@@ -203,14 +203,14 @@ describe("doctorCommand", () => {
 		});
 
 		test("validates category name", async () => {
-			await expect(doctorCommand(["--category", "invalid-category"])).rejects.toThrow(
-				ValidationError,
-			);
+			await expect(
+				doctorCommand(["--category", "invalid-category"], { checkRunners: [] }),
+			).rejects.toThrow(ValidationError);
 		});
 
 		test("invalid category error mentions valid categories", async () => {
 			try {
-				await doctorCommand(["--category", "bad"]);
+				await doctorCommand(["--category", "bad"], { checkRunners: [] });
 				expect.unreachable("should have thrown");
 			} catch (err) {
 				expect(err).toBeInstanceOf(ValidationError);
@@ -237,7 +237,7 @@ describe("doctorCommand", () => {
 
 			for (const category of categories) {
 				chunks = []; // Reset output
-				await doctorCommand(["--category", category, "--json"]);
+				await doctorCommand(["--category", category, "--json"], { checkRunners: [] });
 				const out = output();
 				// Should not throw, and output should be valid JSON
 				JSON.parse(out.trim());
@@ -249,14 +249,14 @@ describe("doctorCommand", () => {
 
 	describe("exit code", () => {
 		test("exit code is undefined when all checks pass or warn", async () => {
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			// All stubs return empty arrays, so no failures
 			expect(process.exitCode).toBeUndefined();
 		});
 
 		test("exit code 0 on success (no failures)", async () => {
 			process.exitCode = undefined;
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			// Should remain undefined (not set to 1) when no failures
 			expect(process.exitCode).not.toBe(1);
 		});
@@ -266,7 +266,9 @@ describe("doctorCommand", () => {
 
 	describe("edge cases", () => {
 		test("handles multiple flags together", async () => {
-			await doctorCommand(["--json", "--verbose", "--category", "config"]);
+			await doctorCommand(["--json", "--verbose", "--category", "config"], {
+				checkRunners: [],
+			});
 			const out = output();
 
 			const parsed = JSON.parse(out.trim()) as {
@@ -278,11 +280,11 @@ describe("doctorCommand", () => {
 
 		test("flags can appear in any order", async () => {
 			chunks = [];
-			await doctorCommand(["--category", "logs", "--json"]);
+			await doctorCommand(["--category", "logs", "--json"], { checkRunners: [] });
 			const out1 = output();
 
 			chunks = [];
-			await doctorCommand(["--json", "--category", "logs"]);
+			await doctorCommand(["--json", "--category", "logs"], { checkRunners: [] });
 			const out2 = output();
 
 			// Both should produce the same JSON
@@ -292,7 +294,7 @@ describe("doctorCommand", () => {
 		test("runs without crashing on minimal config", async () => {
 			// The beforeEach already sets up minimal config, so this just
 			// verifies the command doesn't crash
-			await doctorCommand([]);
+			await doctorCommand([], { checkRunners: [] });
 			const out = output();
 
 			expect(out).toContain("Overstory Doctor");
