@@ -52,6 +52,7 @@ Commands:
   prime                   Load context for orchestrator/agent
   status                  Show all active agents and project state
   dashboard               Live TUI dashboard for agent monitoring
+  feed [options]          Unified real-time event stream across all agents
   inspect <agent>         Deep inspection of a single agent
   coordinator <sub>       Persistent coordinator agent (start/stop/status)
   supervisor <sub>        Per-project supervisor agent (start/stop/status)
@@ -108,6 +109,7 @@ const COMMANDS = [
 	"trace",
 	"feed",
 	"errors",
+	"feed",
 	"replay",
 	"run",
 	"costs",
@@ -257,6 +259,9 @@ async function main(): Promise<void> {
 			break;
 		case "errors":
 			await errorsCommand(commandArgs);
+			break;
+		case "feed":
+			await feedCommand(commandArgs);
 			break;
 		case "replay":
 			await replayCommand(commandArgs);
