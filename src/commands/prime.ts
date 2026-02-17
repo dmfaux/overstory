@@ -270,12 +270,36 @@ async function outputOrchestratorContext(
 		// Tmux detection is optional — silently skip
 	}
 
+	// Record the orchestrator's current branch for merge targeting
+	let sessionBranch: string | null = null;
+	try {
+		const branchProc = Bun.spawn(["git", "symbolic-ref", "--short", "HEAD"], {
+			cwd: config.project.root,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const branchExit = await branchProc.exited;
+		if (branchExit === 0) {
+			const branch = (await new Response(branchProc.stdout).text()).trim();
+			if (branch) {
+				sessionBranch = branch;
+				const sessionBranchPath = join(config.project.root, ".overstory", "session-branch.txt");
+				await Bun.write(sessionBranchPath, `${branch}\n`);
+			}
+		}
+	} catch {
+		// Branch detection is optional — silently skip
+	}
+
 	const sections: string[] = [];
 
 	// Project section
 	sections.push("# Overstory Context");
 	sections.push(`\n## Project: ${config.project.name}`);
 	sections.push(`Canonical branch: ${config.project.canonicalBranch}`);
+	if (sessionBranch && sessionBranch !== config.project.canonicalBranch) {
+		sections.push(`Session branch: ${sessionBranch} (merge target)`);
+	}
 	sections.push(`Max concurrent agents: ${config.agents.maxConcurrent}`);
 	sections.push(`Max depth: ${config.agents.maxDepth}`);
 

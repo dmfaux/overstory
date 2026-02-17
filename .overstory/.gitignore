@@ -16,6 +16,7 @@ sessions.db-wal
 sessions.db-shm
 merge-queue.json
 nudge-state.json
+session-branch.txt
 pending-nudges/
 agents/
 specs/

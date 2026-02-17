@@ -173,7 +173,20 @@ export async function mergeCommand(args: string[]): Promise<void> {
 
 	const cwd = process.cwd();
 	const config = await loadConfig(cwd);
-	const targetBranch = into ?? config.project.canonicalBranch;
+
+	// Resolution chain: --into flag > session-start branch > config canonicalBranch
+	let sessionBranch: string | null = null;
+	if (into === undefined) {
+		const sessionBranchPath = join(config.project.root, ".overstory", "session-branch.txt");
+		const sessionBranchFile = Bun.file(sessionBranchPath);
+		if (await sessionBranchFile.exists()) {
+			const content = (await sessionBranchFile.text()).trim();
+			if (content) {
+				sessionBranch = content;
+			}
+		}
+	}
+	const targetBranch = into ?? sessionBranch ?? config.project.canonicalBranch;
 	const queuePath = join(config.project.root, ".overstory", "merge-queue.db");
 	const queue = createMergeQueue(queuePath);
 	const mulchClient = createMulchClient(config.project.root);

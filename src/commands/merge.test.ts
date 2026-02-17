@@ -521,7 +521,7 @@ merge:
 			expect(currentBranch.trim()).toBe("staging");
 		});
 
-		test("defaults to canonicalBranch when --into is not specified", async () => {
+		test("defaults to canonicalBranch when --into and session-branch.txt are absent", async () => {
 			await setupProject(repoDir, defaultBranch);
 			const branchName = "overstory/builder/bead-default-target";
 			await createCleanFeatureBranch(repoDir, branchName);
@@ -545,6 +545,93 @@ merge:
 			// Verify we ended up on the default branch (the canonical branch)
 			const currentBranch = await runGitInDir(repoDir, ["symbolic-ref", "--short", "HEAD"]);
 			expect(currentBranch.trim()).toBe(defaultBranch);
+		});
+
+		test("reads session-branch.txt as default when --into is not specified", async () => {
+			await setupProject(repoDir, defaultBranch);
+
+			// Create a target branch
+			await commitFile(repoDir, "src/base.ts", "base content");
+			await runGitInDir(repoDir, ["checkout", "-b", "feature/session-work"]);
+			await commitFile(repoDir, "src/session-marker.ts", "session marker");
+			await runGitInDir(repoDir, ["checkout", defaultBranch]);
+
+			// Write session-branch.txt pointing to the feature branch
+			await Bun.write(join(repoDir, ".overstory", "session-branch.txt"), "feature/session-work\n");
+
+			// Create a feature branch to merge
+			const branchName = "overstory/builder/bead-session-branch";
+			await runGitInDir(repoDir, ["checkout", "-b", branchName]);
+			await commitFile(repoDir, `src/${branchName}.ts`, "feature for session branch");
+			await runGitInDir(repoDir, ["checkout", defaultBranch]);
+
+			let output = "";
+			const originalWrite = process.stdout.write.bind(process.stdout);
+			process.stdout.write = (chunk: unknown): boolean => {
+				output += String(chunk);
+				return true;
+			};
+
+			try {
+				// No --into flag — should read session-branch.txt
+				await mergeCommand(["--branch", branchName, "--json"]);
+			} finally {
+				process.stdout.write = originalWrite;
+			}
+
+			const parsed = JSON.parse(output);
+			expect(parsed.success).toBe(true);
+
+			// Verify merge went to session branch, not defaultBranch
+			const currentBranch = await runGitInDir(repoDir, ["symbolic-ref", "--short", "HEAD"]);
+			expect(currentBranch.trim()).toBe("feature/session-work");
+
+			// Verify feature file exists on the session branch
+			const featureFile = await Bun.file(join(repoDir, `src/${branchName}.ts`)).text();
+			expect(featureFile).toBe("feature for session branch");
+		});
+
+		test("--into flag overrides session-branch.txt", async () => {
+			await setupProject(repoDir, defaultBranch);
+
+			// Create two target branches
+			await commitFile(repoDir, "src/base.ts", "base content");
+			await runGitInDir(repoDir, ["checkout", "-b", "session-branch-target"]);
+			await commitFile(repoDir, "src/session-marker.ts", "session marker");
+			await runGitInDir(repoDir, ["checkout", defaultBranch]);
+			await runGitInDir(repoDir, ["checkout", "-b", "explicit-target"]);
+			await commitFile(repoDir, "src/explicit-marker.ts", "explicit marker");
+			await runGitInDir(repoDir, ["checkout", defaultBranch]);
+
+			// Write session-branch.txt pointing to session-branch-target
+			await Bun.write(join(repoDir, ".overstory", "session-branch.txt"), "session-branch-target\n");
+
+			// Create a feature branch to merge
+			const branchName = "overstory/builder/bead-override-test";
+			await runGitInDir(repoDir, ["checkout", "-b", branchName]);
+			await commitFile(repoDir, `src/${branchName}.ts`, "feature content");
+			await runGitInDir(repoDir, ["checkout", defaultBranch]);
+
+			let output = "";
+			const originalWrite = process.stdout.write.bind(process.stdout);
+			process.stdout.write = (chunk: unknown): boolean => {
+				output += String(chunk);
+				return true;
+			};
+
+			try {
+				// --into overrides session-branch.txt
+				await mergeCommand(["--branch", branchName, "--into", "explicit-target", "--json"]);
+			} finally {
+				process.stdout.write = originalWrite;
+			}
+
+			const parsed = JSON.parse(output);
+			expect(parsed.success).toBe(true);
+
+			// Verify merge went to explicit-target, not session-branch-target
+			const currentBranch = await runGitInDir(repoDir, ["symbolic-ref", "--short", "HEAD"]);
+			expect(currentBranch.trim()).toBe("explicit-target");
 		});
 	});
 

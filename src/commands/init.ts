@@ -284,6 +284,16 @@ function buildHooksJson(): string {
 			],
 			PreToolUse: [
 				{
+					matcher: "Bash",
+					hooks: [
+						{
+							type: "command",
+							command:
+								'read -r INPUT; CMD=$(echo "$INPUT" | sed \'s/.*"command": *"\\([^"]*\\)".*/\\1/\'); if echo "$CMD" | grep -qE \'\\bgit\\s+push\\b\'; then echo \'{"decision":"block","reason":"git push is blocked by overstory — merge locally, push manually when ready"}\'; exit 0; fi;',
+						},
+					],
+				},
+				{
 					matcher: "",
 					hooks: [
 						{
@@ -422,6 +432,7 @@ merge-queue.db
 merge-queue.db-wal
 merge-queue.db-shm
 nudge-state.json
+session-branch.txt
 pending-nudges/
 agents/
 specs/

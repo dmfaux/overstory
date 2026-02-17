@@ -155,6 +155,7 @@ target-project/
     agent-manifest.json           # Agent registry
     hooks.json                    # Central hooks config
     current-run.txt               # Active run ID
+    session-branch.txt            # Branch at session start (merge target default)
     merge-queue.db                # FIFO merge queue (SQLite, WAL mode)
     agents/{name}/                # Agent state + identity
       identity.yaml               # Persistent agent CV
@@ -314,7 +315,7 @@ overstory nudge <agent> [message]       Send a text nudge to an agent via tmux
 overstory merge                         Merge agent branches into canonical
   --branch <name>                        Specific branch
   --all                                  All completed branches
-  --into <branch>                        Target branch (default: config canonicalBranch)
+  --into <branch>                        Target branch (default: session-branch.txt > canonicalBranch)
   --dry-run                              Check for conflicts only
   --json                                 JSON output
 ```

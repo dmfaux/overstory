@@ -49,9 +49,6 @@ const NATIVE_TEAM_TOOLS = [
 /** Tools that non-implementation agents must not use. */
 const WRITE_TOOLS = ["Write", "Edit", "NotebookEdit"];
 
-/** Canonical branch names that agents must never push to directly. */
-const CANONICAL_BRANCHES = ["main", "master"];
-
 /**
  * Bash commands that modify files and must be blocked for non-implementation agents.
  * Each pattern is a regex fragment used inside a grep -qE check.
@@ -227,7 +224,6 @@ function blockGuard(toolName: string, reason: string): HookEntry {
  * dangerous patterns (push to canonical branch, hard reset, wrong branch naming).
  */
 function buildBashGuardScript(agentName: string): string {
-	const canonicalPattern = CANONICAL_BRANCHES.join("|");
 	// The script reads JSON from stdin, extracts the command field, then checks patterns.
 	// Uses parameter expansion to avoid requiring jq (zero runtime deps).
 	const script = [
@@ -236,9 +232,9 @@ function buildBashGuardScript(agentName: string): string {
 		"read -r INPUT;",
 		// Extract command value from JSON — grab everything after "command": (with optional space)
 		'CMD=$(echo "$INPUT" | sed \'s/.*"command": *"\\([^"]*\\)".*/\\1/\');',
-		// Check 1: Block git push to canonical branches
-		`if echo "$CMD" | grep -qE 'git\\s+push\\s+\\S+\\s+(${canonicalPattern})'; then`,
-		`  echo '{"decision":"block","reason":"Agents must not push to canonical branch (${CANONICAL_BRANCHES.join("/")})"}';`,
+		// Check 1: Block all git push — agents must never push to remote
+		"if echo \"$CMD\" | grep -qE '\\bgit\\s+push\\b'; then",
+		'  echo \'{"decision":"block","reason":"git push is blocked — use overstory merge to integrate changes, push manually when ready"}\';',
 		"  exit 0;",
 		"fi;",
 		// Check 2: Block git reset --hard

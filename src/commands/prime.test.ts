@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cleanupTempDir, createTempGitRepo } from "../test-helpers.ts";
 import type { AgentSession } from "../types.ts";
 import { primeCommand } from "./prime.ts";
 
@@ -321,6 +322,72 @@ recentTasks: []
 
 			expect(out).toContain("# Agent Context: compact-agent");
 			expect(out).not.toContain("## Expertise");
+		});
+	});
+
+	describe("Session branch capture", () => {
+		test("orchestrator prime writes session-branch.txt with current git branch", async () => {
+			// Need a real git repo for branch detection
+			const gitRepoDir = await createTempGitRepo();
+			try {
+				const overstoryDir = join(gitRepoDir, ".overstory");
+				await mkdir(overstoryDir, { recursive: true });
+				await Bun.write(
+					join(overstoryDir, "config.yaml"),
+					`project:\n  name: branch-test\n  root: ${gitRepoDir}\n  canonicalBranch: main\nmulch:\n  enabled: false\n`,
+				);
+
+				// Save and change cwd to the git repo
+				process.chdir(gitRepoDir);
+
+				await primeCommand([]);
+				const out = output();
+
+				expect(out).toContain("# Overstory Context");
+
+				// Verify session-branch.txt was written
+				const sessionBranchPath = join(overstoryDir, "session-branch.txt");
+				const content = await Bun.file(sessionBranchPath).text();
+				expect(content.trim()).toBe("main");
+			} finally {
+				process.chdir(originalCwd);
+				await cleanupTempDir(gitRepoDir);
+			}
+		});
+
+		test("shows session branch in context when different from canonical", async () => {
+			const gitRepoDir = await createTempGitRepo();
+			try {
+				// Create and switch to a feature branch
+				const proc = Bun.spawn(["git", "checkout", "-b", "feature/my-work"], {
+					cwd: gitRepoDir,
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				await proc.exited;
+
+				const overstoryDir = join(gitRepoDir, ".overstory");
+				await mkdir(overstoryDir, { recursive: true });
+				await Bun.write(
+					join(overstoryDir, "config.yaml"),
+					`project:\n  name: branch-test\n  root: ${gitRepoDir}\n  canonicalBranch: main\nmulch:\n  enabled: false\n`,
+				);
+
+				process.chdir(gitRepoDir);
+
+				await primeCommand([]);
+				const out = output();
+
+				expect(out).toContain("Session branch: feature/my-work (merge target)");
+
+				// Verify session-branch.txt was written with the feature branch
+				const sessionBranchPath = join(overstoryDir, "session-branch.txt");
+				const content = await Bun.file(sessionBranchPath).text();
+				expect(content.trim()).toBe("feature/my-work");
+			} finally {
+				process.chdir(originalCwd);
+				await cleanupTempDir(gitRepoDir);
+			}
 		});
 	});
 });

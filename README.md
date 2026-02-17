@@ -175,6 +175,7 @@ overstory group list                    List all groups
 overstory merge                         Merge agent branches into canonical
   --branch <name>                        Specific branch
   --all                                  All completed branches
+  --into <branch>                        Target branch (default: session-branch.txt > canonicalBranch)
   --dry-run                              Check for conflicts only
 
 overstory worktree list                 List worktrees with status
@@ -264,13 +265,13 @@ Global Flags:
 - **Dependencies**: Zero runtime dependencies — only Bun built-in APIs
 - **Database**: SQLite via `bun:sqlite` (WAL mode for concurrent access)
 - **Linting**: Biome (formatter + linter)
-- **Testing**: `bun test` (1793 tests across 73 files, colocated with source)
+- **Testing**: `bun test` (1805 tests across 73 files, colocated with source)
 - **External CLIs**: `bd` (beads), `mulch`, `git`, `tmux` — invoked as subprocesses
 
 ## Development
 
 ```bash
-# Run tests (1793 tests across 73 files)
+# Run tests (1805 tests across 73 files)
 bun test
 
 # Run a single test

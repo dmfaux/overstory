@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-02-17
+
+### Added
+
+#### New Flags
+- `--into <branch>` flag for `overstory merge` — target a specific branch instead of always merging to canonicalBranch
+
+#### Session Branch Tracking
+- `overstory prime` now records the orchestrator's starting branch to `.overstory/session-branch.txt` at session start
+- `overstory merge` reads `session-branch.txt` as the default merge target when `--into` is not specified — resolution chain: `--into` flag > `session-branch.txt` > config `canonicalBranch`
+
+#### Testing
+- Test suite grew from 1793 to 1805 tests across 73 files (4615 expect() calls)
+
+### Changed
+- Git push blocking for agents now blocks ALL `git push` commands (previously only blocked push to canonical branches) — agents should use `overstory merge` instead
+- Init-deployed hooks now include a PreToolUse Bash guard that blocks `git push` for the orchestrator's project
+
+### Fixed
+- Test cwd pollution in agents test afterEach — restored cwd to prevent cross-file pollution
+
 ## [0.5.1] - 2026-02-16
 
 ### Added
@@ -264,7 +285,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Biome configuration for formatting and linting
 - TypeScript strict mode with `noUncheckedIndexedAccess`
 
-[Unreleased]: https://github.com/jayminwest/overstory/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/jayminwest/overstory/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/jayminwest/overstory/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/jayminwest/overstory/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jayminwest/overstory/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jayminwest/overstory/compare/v0.4.0...v0.4.1

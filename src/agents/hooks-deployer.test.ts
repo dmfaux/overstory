@@ -763,18 +763,12 @@ describe("getDangerGuards", () => {
 		expect(command).toContain("overstory/my-builder/");
 	});
 
-	test("guard command checks for git push to main", () => {
+	test("guard command blocks all git push", () => {
 		const guards = getDangerGuards("test-agent");
 		const command = guards[0]?.hooks[0]?.command ?? "";
 		expect(command).toContain("git");
 		expect(command).toContain("push");
-		expect(command).toContain("main");
-	});
-
-	test("guard command checks for git push to master", () => {
-		const guards = getDangerGuards("test-agent");
-		const command = guards[0]?.hooks[0]?.command ?? "";
-		expect(command).toContain("master");
+		expect(command).toContain("block");
 	});
 
 	test("guard command checks for git reset --hard", () => {
