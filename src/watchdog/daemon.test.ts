@@ -1331,3 +1331,392 @@ describe("daemon mulch failure recording", () => {
 		expect(failureMock.calls[0]?.reason).toContain("Progressive escalation");
 	});
 });
+
+// === Run completion detection tests ===
+
+describe("run completion detection", () => {
+	const runId = "run-2026-02-18T15-00-00-000Z";
+
+	test("nudges coordinator when all workers completed", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s3",
+				agentName: "coordinator",
+				capability: "coordinator",
+				tmuxSession: "overstory-agent-fake-coordinator",
+				state: "working",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+
+		const nudgeMock = nudgeTracker();
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeMock.nudge,
+			_eventStore: null,
+		});
+
+		// Filter to only run-completion nudges targeting the coordinator
+		const coordinatorNudges = nudgeMock.calls.filter(
+			(c) => c.agentName === "coordinator" && c.message.includes("WATCHDOG") && c.message.includes("worker"),
+		);
+		expect(coordinatorNudges).toHaveLength(1);
+		expect(coordinatorNudges[0]?.message).toContain("2");
+	});
+
+	test("does not nudge when some workers still active", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "working",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+
+		const nudgeMock = nudgeTracker();
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeMock.nudge,
+			_eventStore: null,
+		});
+
+		const coordinatorNudges = nudgeMock.calls.filter(
+			(c) => c.agentName === "coordinator" && c.message.includes("worker"),
+		);
+		expect(coordinatorNudges).toHaveLength(0);
+	});
+
+	test("does not nudge when already notified (dedup marker)", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+		// Pre-write dedup marker
+		await Bun.write(join(tempRoot, ".overstory", "run-complete-notified.txt"), runId);
+
+		const nudgeMock = nudgeTracker();
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeMock.nudge,
+			_eventStore: null,
+		});
+
+		const coordinatorNudges = nudgeMock.calls.filter(
+			(c) => c.agentName === "coordinator" && c.message.includes("worker"),
+		);
+		expect(coordinatorNudges).toHaveLength(0);
+	});
+
+	test("skips completion check when no run ID", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		// Do NOT write current-run.txt
+
+		const nudgeMock = nudgeTracker();
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeMock.nudge,
+			_eventStore: null,
+		});
+
+		const coordinatorNudges = nudgeMock.calls.filter(
+			(c) => c.agentName === "coordinator" && c.message.includes("worker"),
+		);
+		expect(coordinatorNudges).toHaveLength(0);
+	});
+
+	test("ignores coordinator and monitor sessions for completion check", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "coordinator",
+				capability: "coordinator",
+				tmuxSession: "overstory-agent-fake-coordinator",
+				state: "working",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "monitor",
+				capability: "monitor",
+				tmuxSession: "overstory-agent-fake-monitor",
+				state: "working",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s3",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s4",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+
+		const nudgeMock = nudgeTracker();
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeMock.nudge,
+			_eventStore: null,
+		});
+
+		// Nudge IS sent because coordinator/monitor are excluded from worker count
+		const coordinatorNudges = nudgeMock.calls.filter(
+			(c) => c.agentName === "coordinator" && c.message.includes("worker"),
+		);
+		expect(coordinatorNudges).toHaveLength(1);
+	});
+
+	test("does not nudge when no worker sessions in run", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "coordinator",
+				capability: "coordinator",
+				tmuxSession: "overstory-agent-fake-coordinator",
+				state: "working",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "monitor",
+				capability: "monitor",
+				tmuxSession: "overstory-agent-fake-monitor",
+				state: "working",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+
+		const nudgeMock = nudgeTracker();
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeMock.nudge,
+			_eventStore: null,
+		});
+
+		const coordinatorNudges = nudgeMock.calls.filter(
+			(c) => c.agentName === "coordinator" && c.message.includes("worker"),
+		);
+		expect(coordinatorNudges).toHaveLength(0);
+	});
+
+	test("records run_complete event when all workers done", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+
+		const eventsDbPath = join(tempRoot, ".overstory", "events.db");
+		const eventStore = createEventStore(eventsDbPath);
+
+		try {
+			await runDaemonTick({
+				root: tempRoot,
+				...THRESHOLDS,
+				_tmux: tmuxAllAlive(),
+				_triage: triageAlways("extend"),
+				_nudge: nudgeTracker().nudge,
+				_eventStore: eventStore,
+			});
+		} finally {
+			eventStore.close();
+		}
+
+		// Read events back
+		const store = createEventStore(eventsDbPath);
+		try {
+			const events = store.getTimeline({ since: "2000-01-01T00:00:00Z" });
+			const runCompleteEvent = events.find((e) => {
+				if (!e.data) return false;
+				const data = JSON.parse(e.data) as Record<string, unknown>;
+				return data.type === "run_complete";
+			});
+			expect(runCompleteEvent).toBeDefined();
+			expect(runCompleteEvent?.level).toBe("info");
+			expect(runCompleteEvent?.agentName).toBe("watchdog");
+		} finally {
+			store.close();
+		}
+	});
+
+	test("writes dedup marker after nudging", async () => {
+		const sessions = [
+			makeSession({
+				id: "s1",
+				agentName: "builder-one",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-one",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+			makeSession({
+				id: "s2",
+				agentName: "builder-two",
+				capability: "builder",
+				tmuxSession: "overstory-agent-fake-builder-two",
+				state: "completed",
+				runId,
+				lastActivity: new Date().toISOString(),
+			}),
+		];
+
+		writeSessionsToStore(tempRoot, sessions);
+		await Bun.write(join(tempRoot, ".overstory", "current-run.txt"), runId);
+
+		await runDaemonTick({
+			root: tempRoot,
+			...THRESHOLDS,
+			_tmux: tmuxAllAlive(),
+			_triage: triageAlways("extend"),
+			_nudge: nudgeTracker().nudge,
+			_eventStore: null,
+		});
+
+		// Verify dedup marker was written
+		const markerFile = Bun.file(join(tempRoot, ".overstory", "run-complete-notified.txt"));
+		expect(await markerFile.exists()).toBe(true);
+		const markerContent = await markerFile.text();
+		expect(markerContent.trim()).toBe(runId);
+	});
+});
