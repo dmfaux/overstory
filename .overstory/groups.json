@@ -160,5 +160,18 @@
 		"status": "completed",
 		"createdAt": "2026-02-17T15:35:39.805Z",
 		"completedAt": "2026-02-17T16:14:56.698Z"
+	},
+	{
+		"id": "group-933a3b72",
+		"name": "p1p2-batch-2",
+		"memberIssueIds": [
+			"overstory-e5jb",
+			"overstory-d9d8",
+			"overstory-6sc8",
+			"overstory-3e3s"
+		],
+		"status": "active",
+		"createdAt": "2026-02-18T15:14:35.484Z",
+		"completedAt": null
 	}
 ]
