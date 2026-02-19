@@ -32,7 +32,7 @@ export interface OverstoryConfig {
 		tier0Enabled: boolean; // Tier 0: Mechanical daemon (heartbeat, tmux/pid liveness)
 		tier0IntervalMs: number; // Default 30_000
 		tier1Enabled: boolean; // Tier 1: Triage agent (ephemeral AI analysis)
-		tier2Enabled: boolean; // Tier 2: Monitor agent (continuous patrol — not yet implemented)
+		tier2Enabled: boolean; // Tier 2: Monitor agent (continuous patrol)
 		staleThresholdMs: number; // When to consider agent stale
 		zombieThresholdMs: number; // When to kill
 		nudgeIntervalMs: number; // Time between progressive nudge stages (default 60_000)

@@ -20,10 +20,10 @@ import { createIdentity, loadIdentity } from "../agents/identity.ts";
 import { createManifestLoader, resolveModel } from "../agents/manifest.ts";
 import { loadConfig } from "../config.ts";
 import { AgentError, ValidationError } from "../errors.ts";
-import { isRunningAsRoot } from "./sling.ts";
 import { openSessionStore } from "../sessions/compat.ts";
 import type { AgentSession } from "../types.ts";
 import { createSession, isSessionAlive, killSession, sendKeys } from "../worktree/tmux.ts";
+import { isRunningAsRoot } from "./sling.ts";
 
 /** Default monitor agent name. */
 const MONITOR_NAME = "monitor";
@@ -82,6 +82,15 @@ async function startMonitor(args: string[]): Promise<void> {
 
 	const cwd = process.cwd();
 	const config = await loadConfig(cwd);
+
+	// Gate on tier2Enabled config flag
+	if (!config.watchdog.tier2Enabled) {
+		throw new AgentError(
+			"Monitor agent (Tier 2) is disabled. Set watchdog.tier2Enabled: true in .overstory/config.yaml to enable.",
+			{ agentName: MONITOR_NAME },
+		);
+	}
+
 	const projectRoot = config.project.root;
 	const tmuxSession = monitorTmuxSession(config.project.name);
 
