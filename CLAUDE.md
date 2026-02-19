@@ -394,6 +394,7 @@ overstory logs [options]                Query NDJSON logs across agents
 
 overstory costs                          Token/cost analysis and breakdown
   --live                                 Show real-time token usage for active agents
+  --self                                 Show cost for the current orchestrator session
   --agent <name>  --run <id>             Filter by agent or run
   --by-capability                        Group by capability with subtotals
   --last <n>                             Recent sessions (default: 20)

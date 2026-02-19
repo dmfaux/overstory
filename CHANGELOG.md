@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-02-19
+
+### Added
+
+#### Provider Types
+- `ModelAlias`, `ModelRef`, and `ProviderConfig` types in `types.ts` — foundation for multi-provider model routing (`native` and `gateway` provider types with `baseUrl` and `authTokenEnv` configuration)
+- `providers` field in `OverstoryConfig` — `Record<string, ProviderConfig>` for configuring model providers per project
+- `resolveModel()` signature updated to accept `ModelRef` (provider-qualified strings like `openrouter/openai/gpt-5.3`) alongside simple `ModelAlias` values
+
+#### Costs Command
+- `--self` flag for `overstory costs` — parse the current orchestrator session's Claude Code transcript directly, bypassing metrics.db, useful for real-time cost visibility without agent infrastructure
+
+#### Metrics
+- `run_id` column added to `metrics.db` sessions table — enables `overstory costs --run <id>` filtering to work correctly; includes automatic migration for existing databases
+
+#### Watchdog
+- Phase-aware `buildCompletionMessage()` in watchdog daemon — generates targeted completion nudge messages based on worker capability composition (single-capability batches get phase-specific messages like "Ready for next phase", mixed batches get a summary with breakdown)
+
+#### Testing
+- Test suite grew from 1892 to 1916 tests across 73 files (4866 expect() calls)
+
 ## [0.5.6] - 2026-02-18
 
 ### Added
@@ -389,7 +410,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Biome configuration for formatting and linting
 - TypeScript strict mode with `noUncheckedIndexedAccess`
 
-[Unreleased]: https://github.com/jayminwest/overstory/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/jayminwest/overstory/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/jayminwest/overstory/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/jayminwest/overstory/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/jayminwest/overstory/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/jayminwest/overstory/compare/v0.5.3...v0.5.4
