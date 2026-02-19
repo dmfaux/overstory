@@ -122,9 +122,12 @@ describe("checkLogs", () => {
 		const agentDir = join(logsDir, "test-agent", "session-1");
 		await mkdir(agentDir, { recursive: true });
 
-		// Create a large log file (> 500MB threshold)
-		const largeContent = "x".repeat(600 * 1024 * 1024); // 600MB
-		await writeFile(join(agentDir, "session.log"), largeContent);
+		// Create a sparse file that reports as 600MB without allocating real disk space
+		const filePath = join(agentDir, "session.log");
+		const { promises: fsp } = await import("node:fs");
+		const fd = await fsp.open(filePath, "w");
+		await fd.truncate(600 * 1024 * 1024); // 600MB sparse file
+		await fd.close();
 
 		const checks = await checkLogs(mockConfig, overstoryDir);
 
