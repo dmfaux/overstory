@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { AgentError } from "../errors.ts";
-import type { AgentDefinition, AgentManifest, OverstoryConfig, ProviderConfig, ResolvedModel } from "../types.ts";
+import type {
+	AgentDefinition,
+	AgentManifest,
+	OverstoryConfig,
+	ProviderConfig,
+	ResolvedModel,
+} from "../types.ts";
 
 /**
  * Interface for loading, querying, and validating an agent manifest.

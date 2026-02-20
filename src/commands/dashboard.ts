@@ -255,11 +255,7 @@ async function loadDashboardData(
 	// Reconcile zombie states inline (same logic as gatherStatus)
 	const tmuxSessionNames = new Set(tmuxSessions.map((s) => s.name));
 	for (const session of allSessions) {
-		if (
-			session.state === "booting" ||
-			session.state === "working" ||
-			session.state === "stalled"
-		) {
+		if (session.state === "booting" || session.state === "working" || session.state === "stalled") {
 			const tmuxAlive = tmuxSessionNames.has(session.tmuxSession);
 			if (!tmuxAlive) {
 				try {
@@ -378,8 +374,7 @@ async function loadDashboardData(
 				const completedSessions = filtered.filter((s) => s.completedAt !== null);
 				if (completedSessions.length > 0) {
 					avgDuration =
-						completedSessions.reduce((sum, s) => sum + s.durationMs, 0) /
-						completedSessions.length;
+						completedSessions.reduce((sum, s) => sum + s.durationMs, 0) / completedSessions.length;
 				}
 			} else {
 				avgDuration = stores.metricsStore.getAverageDuration();

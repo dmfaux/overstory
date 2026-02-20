@@ -310,7 +310,12 @@ export function createMailStore(dbPath: string): MailStore {
 			return rows.map(rowToMessage);
 		},
 
-		getAll(filters?: { from?: string; to?: string; unread?: boolean; limit?: number }): MailMessage[] {
+		getAll(filters?: {
+			from?: string;
+			to?: string;
+			unread?: boolean;
+			limit?: number;
+		}): MailMessage[] {
 			return buildFilterQuery(filters);
 		},
 

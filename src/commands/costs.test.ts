@@ -1027,7 +1027,7 @@ describe("costsCommand", () => {
 					},
 				},
 			};
-			return JSON.stringify(entry) + "\n";
+			return `${JSON.stringify(entry)}\n`;
 		}
 
 		beforeEach(async () => {

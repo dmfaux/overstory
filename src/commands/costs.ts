@@ -308,7 +308,7 @@ export async function costsCommand(args: string[]): Promise<void> {
 
 		if (json) {
 			process.stdout.write(
-				JSON.stringify({
+				`${JSON.stringify({
 					source: "self",
 					transcriptPath,
 					model: usage.modelUsed,
@@ -317,7 +317,7 @@ export async function costsCommand(args: string[]): Promise<void> {
 					cacheReadTokens: usage.cacheReadTokens,
 					cacheCreationTokens: usage.cacheCreationTokens,
 					estimatedCostUsd: cost,
-				}) + "\n",
+				})}\n`,
 			);
 		} else {
 			const w = process.stdout.write.bind(process.stdout);
