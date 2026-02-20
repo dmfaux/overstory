@@ -14,21 +14,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Provider Model Resolution
 - `ResolvedModel` type and provider gateway support in `resolveModel()` — resolves `ModelRef` strings (e.g., `openrouter/openai/gpt-5.3`) through configured provider gateways with `baseUrl` and `authTokenEnv`
 - Provider and model validation in `validateConfig()` — validates provider types (`native`/`gateway`), required gateway fields (`baseUrl`), and model reference format at config load time
+- Provider environment variables now threaded through all agent spawn commands (`sling`, `coordinator`, `supervisor`, `monitor`) — gateway `authTokenEnv` values are passed to spawned agent processes
+
+#### Mulch Integration
+- Auto-infer mulch domains from file scope in `overstory sling` — `inferDomainsFromFiles()` maps file paths to domains (e.g., `src/commands/*.ts` → `cli`, `src/agents/*.ts` → `agents`) instead of always using configured defaults
+- Outcome flags for `MulchClient.record()` — `--outcome-status`, `--outcome-duration`, `--outcome-test-results`, `--outcome-agent` for structured outcome tracking
+- File-scoped search in `MulchClient.search()` — `--file` and `--sort-by-score` options for targeted expertise queries
+- PostToolUse Bash hook in hooks template and init — runs `mulch diff` after git commits to auto-detect expertise changes
+
+#### Agent Definition Updates
+- Builder completion protocol includes outcome data flags (`--outcome-status success --outcome-agent $OVERSTORY_AGENT_NAME`)
+- Lead and supervisor agents get file-scoped mulch search capability (`mulch search <query> --file <path>`)
+- Overlay quality gates include outcome flags for mulch recording
 
 #### Dashboard Performance
 - `limit` option added to `MailStore.getAll()` — dashboard now fetches only the most recent messages instead of the full mailbox
 - Persistent DB connections across dashboard poll ticks — `SessionStore`, `EventStore`, `MailStore`, and `MetricsStore` connections are now opened once and reused, eliminating per-tick open/close overhead
 
 #### Testing
-- Test suite grew from 1916 to 1974 tests across 73 files (4933 expect() calls)
+- Test suite grew from 1916 to 1996 tests across 73 files (4960 expect() calls)
 
 ### Fixed
+- Zombie agent recovery — `updateLastActivity` now recovers agents from "zombie" state when hooks prove they're alive (previously only recovered from "booting")
 - Dashboard `.repeat()` crash when negative values were passed — now clamps repeat count to minimum of 0
 - Set-based tmux session lookup in `status.ts` replacing O(n) array scans with O(1) Set membership checks
 - Subprocess cache in `status.ts` preventing redundant `tmux list-sessions` calls during a single status gather
 - Null-runId sessions (coordinator) now included in run-scoped status and dashboard views — previously filtered out when `--all` was not specified
 - Sparse file used in logs doctor test to prevent timeout on large log directory scans
 - Beacon submission reliability — replaced fixed sleep with poll-based TUI readiness check (PR #19, thanks [@dmfaux](https://github.com/dmfaux)!)
+- Biome formatting in hooks-deployer test and sling
 
 ## [0.5.7] - 2026-02-19
 
